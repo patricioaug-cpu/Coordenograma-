@@ -1,0 +1,62 @@
+{
+  "entities": {
+    "User": {
+      "title": "User Profile",
+      "description": "User profile with trial and status information",
+      "type": "object",
+      "properties": {
+        "nome": { "type": "string" },
+        "email": { "type": "string" },
+        "status": { "type": "string", "enum": ["Trial", "Liberado", "Bloqueado"] },
+        "trial_inicio": { "type": "string", "format": "date-time" },
+        "trial_fim": { "type": "string", "format": "date-time" },
+        "deviceId": { "type": "string" }
+      },
+      "required": ["email", "status"]
+    },
+    "Login": {
+      "title": "User Login Record",
+      "description": "Record of user login for auditing and notification",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "email": { "type": "string" },
+        "nome": { "type": "string" },
+        "data_hora": { "type": "string", "format": "date-time" },
+        "ip": { "type": "string" }
+      },
+      "required": ["user_id", "data_hora"]
+    },
+    "Calculo": {
+      "title": "Protection Study",
+      "description": "Coordenograma study data",
+      "type": "object",
+      "properties": {
+        "user_id": { "type": "string" },
+        "projeto_nome": { "type": "string" },
+        "concessionaria": { "type": "string" },
+        "dados_json": { "type": "string" },
+        "data": { "type": "string", "format": "date-time" }
+      },
+      "required": ["user_id", "dados_json"]
+    }
+  },
+  "firestore": {
+    "users/{userId}": {
+      "schema": "User",
+      "description": "User profiles and subscription status"
+    },
+    "logins/{loginId}": {
+      "schema": "Login",
+      "description": "Historical login logs"
+    },
+    "calculos/{calculoId}": {
+      "schema": "Calculo",
+      "description": "Saved studies"
+    },
+    "admins/{adminId}": {
+      "schema": { "type": "object", "properties": { "role": { "type": "string" } } },
+      "description": "Admin access list"
+    }
+  }
+}

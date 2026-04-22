@@ -1,0 +1,56 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Catch-all deny
+    match /{document=**} {
+      allow read, write: if false;
+    }
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function isAdmin() {
+      return isSignedIn() && (
+        request.auth.token.email == "patricioaug@gmail.com" ||
+        exists(/databases/$(database)/documents/admins/$(request.auth.uid))
+      );
+    }
+
+    function isOwner(userId) {
+      return isSignedIn() && request.auth.uid == userId;
+    }
+
+    match /users/{userId} {
+      // Allow any signed in user to get their own profile
+      allow get: if isSignedIn() && (request.auth.uid == userId || isAdmin());
+      // Admin can list all users
+      allow list: if isAdmin();
+      // Users can create their own profile
+      allow create: if isSignedIn() && request.auth.uid == userId;
+      // Users can update their own profile (with care on status in production)
+      // For now, allow owner or admin to update
+      allow update: if isOwner(userId) || isAdmin();
+    }
+
+    match /logins/{loginId} {
+      allow create: if isSignedIn();
+      allow list, get: if isAdmin();
+    }
+
+    match /calculos/{calculoId} {
+      // Allow user to get their own calculation
+      allow get: if (isSignedIn() && resource.data.user_id == request.auth.uid) || isAdmin();
+      // Allow user to list their own calculations
+      allow list: if (isSignedIn() && resource.data.user_id == request.auth.uid) || isAdmin();
+      // Allow creation
+      allow create: if isSignedIn() && request.resource.data.user_id == request.auth.uid;
+      // Allow update/delete by owner or admin
+      allow update, delete: if (isSignedIn() && resource.data.user_id == request.auth.uid) || isAdmin();
+    }
+
+    match /admins/{adminId} {
+      allow read: if isSignedIn();
+    }
+  }
+}
