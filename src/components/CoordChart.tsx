@@ -484,9 +484,9 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
   }, [curves, icc_3f, icc_1f, Inominal, specialPoints]);
 
   return (
-    <div className="bg-black border border-[#22c55e33] rounded shadow-inner p-2 overflow-hidden relative group">
+    <div className="bg-black border border-[#22c55e33] rounded shadow-inner p-2 overflow-hidden relative group coord-chart-container">
       {/* Botões de Controle do Gráfico */}
-      <div className="absolute top-4 left-4 flex gap-1 z-10 opacity-60 hover:opacity-100 transition-opacity">
+      <div className="absolute top-4 left-4 flex gap-1 z-10 opacity-60 hover:opacity-100 transition-opacity no-print">
         <button onClick={zoomIn} title="Zoom In" className="p-1.5 bg-[#18181b] border border-[#27272a] text-[#22c55e] rounded hover:bg-[#22c55e] hover:text-black transition-all">
           <ZoomIn className="w-4 h-4" />
         </button>
@@ -501,7 +501,7 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
         </div>
       </div>
 
-      <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
+      <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10 no-print">
         <button onClick={exportPNG} title="Baixar Gráfico (Figura)" className="p-2 bg-[#18181bcc] hover:bg-[#16a34a] border border-[#27272a] text-[#a1a1aa] hover:text-black rounded transition-all">
           <ImageIcon className="w-4 h-4" />
         </button>

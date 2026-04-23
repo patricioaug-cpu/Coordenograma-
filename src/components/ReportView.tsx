@@ -1,4 +1,5 @@
 import React, { useRef } from 'react';
+import { createPortal } from 'react-dom';
 import { CoordChart } from './CoordChart';
 import { Copy, Printer, X, FileText, Shield, Info, Zap, AlertTriangle } from 'lucide-react';
 import { Concessionaria } from '../constants/concessionarias';
@@ -95,34 +96,97 @@ Versão do Sistema: 1.1.0 PRO
     alert('Relatório completo copiado para a área de transferência!');
   };
 
-  return (
-    <div className="fixed inset-0 bg-zinc-950 z-50 flex flex-col items-center overflow-y-auto pb-40 scrollbar-hide">
+  return createPortal(
+    <div className="fixed inset-0 bg-zinc-950 z-[9999] flex flex-col items-center overflow-y-auto pb-40 scrollbar-hide report-portal-wrapper">
       <style>{`
         @media print {
           @page {
-            size: A4;
-            margin: 15mm;
-          }
-          body {
-            background: white;
+            size: A4 portrait;
             margin: 0;
-            padding: 0;
           }
-          .no-print { display: none !important; }
+          html, body {
+            height: auto !important;
+            overflow: visible !important;
+            background-color: white !important;
+            -webkit-print-color-adjust: exact;
+            print-color-adjust: exact;
+            color: black !important;
+          }
+          /* Esconde a aplicação principal e outros elementos */
+          #root, .no-print {
+            display: none !important;
+          }
+          /* Garante que o wrapper do portal seja visível */
+          .report-portal-wrapper {
+            display: block !important;
+            position: absolute !important;
+            top: 0;
+            left: 0;
+            width: 100% !important;
+            background: white !important;
+          }
+          #printable-report {
+            display: block !important;
+            visibility: visible !important;
+            width: 210mm !important;
+            min-height: 297mm !important;
+            padding: 18mm !important;
+            margin: 0 !important;
+            box-shadow: none !important;
+            background: white !important;
+          }
+          .report-section {
+            page-break-inside: avoid;
+            margin-bottom: 25px;
+          }
           .page-break-before-always {
             page-break-before: always;
           }
-          #printable-report {
-            visibility: visible;
-            position: static;
-            width: 100% !important;
-            padding: 0 !important;
-            box-shadow: none !important;
-            margin: 0 !important;
+          /* Forçar contraste preto para impressão */
+          .text-zinc-600, .text-zinc-500, .text-zinc-400 {
+            color: #333 !important;
           }
-          /* Esconde tudo exceto o report */
-          body > :not(.report-container-parent) { display: none !important; }
-          .report-container-parent { display: block !important; }
+          .report-table th {
+            background: #e2e8f0 !important;
+            border: 1px solid black !important;
+          }
+          .report-table td {
+             border: 1px solid black !important;
+          }
+          /* Ajuste do Gráfico para Impressão */
+          .coord-chart-container {
+            background-color: white !important;
+            border: 1px solid #000 !important;
+          }
+          .coord-chart-container svg {
+            background-color: white !important;
+          }
+          .coord-chart-container .label-axis {
+            fill: #000 !important;
+            font-weight: bold !important;
+          }
+          /* Linhas de grade e eixos do D3 no modo print */
+          .coord-chart-container .grid line {
+            stroke: #ddd !important;
+          }
+          .coord-chart-container .axis-label {
+            fill: #000 !important;
+          }
+          .coord-chart-container .x-axis path, 
+          .coord-chart-container .x-axis line,
+          .coord-chart-container .y-axis path, 
+          .coord-chart-container .y-axis line {
+            stroke: #000 !important;
+          }
+          .coord-chart-container .tick text {
+            fill: #000 !important;
+          }
+          .no-print {
+            display: none !important;
+          }
+          .report-portal-wrapper * {
+            -webkit-print-color-adjust: exact;
+          }
         }
         
         #printable-report {
@@ -236,7 +300,6 @@ Versão do Sistema: 1.1.0 PRO
         </div>
       </div>
 
-      {/* Report Container */}
       <div className="w-full flex justify-center px-0 sm:px-4 py-8">
         <div 
           style={{ 
@@ -245,12 +308,12 @@ Versão do Sistema: 1.1.0 PRO
             width: '210mm',
             marginBottom: `-${(1 - previewScale) * 100}%` 
           }}
-          className="bg-white shadow-[0_0_100px_rgba(0,0,0,0.8)]"
+          className="bg-white shadow-[0_0_100px_rgba(0,0,0,0.8)] print:transform-none print:shadow-none print:m-0"
         >
           <div 
             ref={reportRef} 
             id="printable-report"
-            className="p-[15mm] text-black bg-white"
+            className="p-[15mm] text-black bg-white print:p-0"
             style={{ width: '210mm', minHeight: '297mm', boxSizing: 'border-box' }}
           >
             {concessionaria?.id === 'cemig_mg' ? (
@@ -290,7 +353,8 @@ Versão do Sistema: 1.1.0 PRO
             Impressão/PDF via Web: <a href="https://coordenograma.vercel.app" target="_blank" rel="noopener noreferrer" className="text-green-500 font-bold hover:underline">coordenograma.vercel.app</a>
           </p>
       </div>
-    </div>
+    </div>,
+    document.body
   );
 };
 const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) => {
@@ -301,7 +365,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
   const tcSaturationLevel = study.icc_3f / (parseFloat(tcRatioStr.split('/')[0]) || 1);
 
   return (
-    <div className="font-sans leading-tight p-[15mm]">
+    <div className="font-sans leading-tight">
       {/* Header */}
       <div className="flex justify-between items-center border-b-2 border-black pb-4 mb-6">
         <div className="flex items-center gap-4">
@@ -527,7 +591,7 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
   const tcSaturationLevel = study.icc_3f / (parseFloat(tcRatioStr.split('/')[0]) || 1);
 
   return (
-    <div className="text-black font-sans leading-tight p-[15mm]">
+    <div className="text-black font-sans leading-tight">
       <div className="flex justify-between items-start border-b-2 border-black pb-4 mb-4">
          <div className="text-right w-full">
            <h1 className="text-lg font-extrabold uppercase">Memorial de Proteção - Cemig MG</h1>
