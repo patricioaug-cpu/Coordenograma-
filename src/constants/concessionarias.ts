@@ -15,28 +15,28 @@ export const CONCESSIONARIAS: Concessionaria[] = [
     id: 'enel_sp',
     nome: 'Enel SP',
     estado: 'SP',
-    normas: ['CNC-OMBR-ENS-18-001', 'CNC-OMBR-ENS-18-002'],
+    normas: ['ABNT NBR 14039', 'CNC-OMBR-ENS-18-001', 'CNC-OMBR-ENS-18-002'],
     margens: { coord_fase: 0.3, coord_neutro: 0.2, instantaneo: true }
   },
   {
     id: 'light_rj',
     nome: 'Light',
     estado: 'RJ',
-    normas: ['Recon BT/MT'],
+    normas: ['ABNT NBR 14039', 'Recon BT/MT', 'N-15.001'],
     margens: { coord_fase: 0.4, coord_neutro: 0.3, instantaneo: false }
   },
   {
     id: 'cemig_mg',
     nome: 'CEMIG',
     estado: 'MG',
-    normas: ['ND 5.31'],
+    normas: ['ABNT NBR 14039', 'ND 5.3', 'ND 5.1'],
     margens: { coord_fase: 0.3, coord_neutro: 0.2, instantaneo: true }
   },
   {
     id: 'cpfl_paulista',
     nome: 'CPFL Paulista',
     estado: 'SP',
-    normas: ['GED 13'],
+    normas: ['ABNT NBR 14039', 'GED 13', 'GED 119'],
     margens: { coord_fase: 0.3, coord_neutro: 0.2, instantaneo: true }
   },
   {
@@ -57,7 +57,7 @@ export const CONCESSIONARIAS: Concessionaria[] = [
     id: 'copel_pr',
     nome: 'Copel',
     estado: 'PR',
-    normas: ['NTC 841001'],
+    normas: ['ABNT NBR 14039', 'NTC 841001', 'NTC 901110'],
     margens: { coord_fase: 0.3, coord_neutro: 0.2, instantaneo: true }
   },
   {

@@ -17,7 +17,7 @@ export interface SpecialPoint {
   I: number;
   t: number;
   label: string;
-  type: 'ANSI' | 'INRUSH' | 'NOMINAL' | 'ICC' | 'GERACAO' | 'SINCRONISMO';
+  type: 'ANSI' | 'INRUSH' | 'NOMINAL' | 'ICC' | 'GERACAO' | 'SINCRONISMO' | 'INST' | 'DEF';
 }
 
 interface CoordChartProps {
@@ -206,6 +206,28 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
     let currentXScale = xScaleBase;
     let currentYScale = yScaleBase;
 
+    // Labels de Eixo
+    mainGroup.append("text")
+      .attr("x", width / 2)
+      .attr("y", height + 40)
+      .attr("fill", "rgba(34, 197, 94, 0.6)")
+      .attr("font-size", "10px")
+      .attr("font-family", "monospace")
+      .attr("text-anchor", "middle")
+      .attr("font-weight", "bold")
+      .text("CORRENTE (A)");
+
+    mainGroup.append("text")
+      .attr("transform", "rotate(-90)")
+      .attr("x", -height / 2)
+      .attr("y", -45)
+      .attr("fill", "rgba(34, 197, 94, 0.6)")
+      .attr("font-size", "10px")
+      .attr("font-family", "monospace")
+      .attr("text-anchor", "middle")
+      .attr("font-weight", "bold")
+      .text("TEMPO (s)");
+
     // Função Principal de Renderização / Update
     const render = (newXScale: any, newYScale: any) => {
       currentXScale = newXScale;
@@ -343,6 +365,10 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
           pointsGroup.append("path").attr("d", d3.symbol().type(d3.symbolTriangle).size(80)()).attr("transform", `translate(${px}, ${py})`).attr("fill", "#a855f7").attr("stroke", "white").attr("stroke-width", 1);
         } else if (p.type === 'SINCRONISMO') {
           pointsGroup.append("path").attr("d", d3.symbol().type(d3.symbolWye).size(80)()).attr("transform", `translate(${px}, ${py})`).attr("fill", "#06b6d4").attr("stroke", "white").attr("stroke-width", 1);
+        } else if (p.type === 'INST') {
+          pointsGroup.append("circle").attr("cx", px).attr("cy", py).attr("r", 4).attr("fill", "#e11d48").attr("stroke", "white").attr("stroke-width", 1);
+        } else if (p.type === 'DEF') {
+          pointsGroup.append("circle").attr("cx", px).attr("cy", py).attr("r", 4).attr("fill", "#f97316").attr("stroke", "white").attr("stroke-width", 1);
         }
 
         // Evitar sobreposição de rótulos de pontos especiais
@@ -476,10 +502,7 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
       </div>
 
       <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10">
-        <button onClick={exportSVG} title="Exportar SVG" className="p-2 bg-[#18181bcc] hover:bg-[#16a34a] border border-[#27272a] text-[#a1a1aa] hover:text-black rounded transition-all">
-          <Download className="w-4 h-4" />
-        </button>
-        <button onClick={exportPNG} title="Exportar PNG" className="p-2 bg-[#18181bcc] hover:bg-[#16a34a] border border-[#27272a] text-[#a1a1aa] hover:text-black rounded transition-all">
+        <button onClick={exportPNG} title="Baixar Gráfico (Figura)" className="p-2 bg-[#18181bcc] hover:bg-[#16a34a] border border-[#27272a] text-[#a1a1aa] hover:text-black rounded transition-all">
           <ImageIcon className="w-4 h-4" />
         </button>
       </div>

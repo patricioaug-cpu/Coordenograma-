@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { CONCESSIONARIAS, Concessionaria } from '../constants/concessionarias';
-import { generateFullRelayCurve, CurveType, calculateInominal, calculateANSIPoints, calculateInrushPoint, calculateInPlant, CURVE_CONSTANTS } from '../lib/protection-utils';
+import { COMMONLY_USED_RELAYS } from '../constants/relays';
+import { generateFullRelayCurve, CurveType, calculateInominal, calculateANSIPoints, calculateInrushPoint, calculateMotorInrush, calculateInPlant, CURVE_CONSTANTS, getTechnicalSuggestions, calculateTime, validateTC } from '../lib/protection-utils';
 import { CoordChart, SpecialPoint } from './CoordChart';
 import { auth, db, handleFirestoreError } from '../lib/firebase';
 import { signOut } from 'firebase/auth';
-import { Settings, Save, FileText, LayoutList, LogOut, ChevronRight, AlertTriangle, CheckCircle2, User as UserIcon, ShieldAlert, Menu, X as CloseIcon, Plus, Trash2, History as HistoryIcon, Search, HelpCircle, Cpu } from 'lucide-react';
+import { Settings, Save, FileText, LayoutList, LogOut, ChevronRight, AlertTriangle, CheckCircle2, User as UserIcon, ShieldAlert, Menu, X as CloseIcon, Plus, Trash2, History as HistoryIcon, Search, HelpCircle, Cpu, Info, Zap } from 'lucide-react';
 import { collection, addDoc, query, where, getDocs, deleteDoc, doc, serverTimestamp, orderBy } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { AdminPanel } from './AdminPanel';
@@ -14,10 +15,14 @@ import { HelpMenu } from './HelpMenu';
 
 interface Equipamento {
   id: string;
-  tipo: string;
+  tipo: 'Transformador' | 'Motor' | 'Carga Geral' | 'Banco de Capacitores';
   kva: number;
   qtd: number;
   descricao: string;
+  z?: number;
+  v_prim?: number;
+  v_sec?: number;
+  isolamento?: string;
 }
 
 interface StudyData {
@@ -54,10 +59,7 @@ interface StudyData {
     [key: string]: { 
       habilitada: boolean; 
       ajuste: string;
-      f_low?: number;
-      f_high?: number;
-      t_low?: number;
-      t_high?: number;
+      [param: string]: any;
     };
   };
   geracao_propria: { habilitada: boolean; descricao: string; i_adj: number; t_adj: number };
@@ -117,12 +119,14 @@ const DEFAULT_STUDY: StudyData = {
   codigo_instalacao: '',
   normas_selecionadas: ['CNC-OMBR-ENS-18-001', 'CNC-OMBR-ENS-18-002'],
   funcoes_adicionais: {
-    '27': { habilitada: false, ajuste: '' },
-    '59': { habilitada: false, ajuste: '' },
+    '27': { habilitada: false, ajuste: '', v_pick: 92, t_pick: 2.0 },
+    '59': { habilitada: false, ajuste: '', v_pick: 110, t_pick: 1.0 },
     '81': { habilitada: false, ajuste: '', f_low: 58.5, f_high: 61.5, t_low: 0.1, t_high: 0.1 },
-    '32': { habilitada: false, ajuste: '' },
-    '46': { habilitada: false, ajuste: '' },
-    '47': { habilitada: false, ajuste: '' }
+    '32': { habilitada: false, ajuste: '', p_rev: 50, t_rev: 5.0 },
+    '46': { habilitada: false, ajuste: '', deseq: 15, t_deseq: 2.0 },
+    '47': { habilitada: false, ajuste: '', seq_neg: 115, t_seq_neg: 1.0 },
+    '67': { habilitada: false, ajuste: '', pickup: 50, tms: 0.1, angulo: 60 },
+    '67N': { habilitada: false, ajuste: '', pickup: 10, tms: 0.1, angulo: 60 }
   },
   geracao_propria: { habilitada: false, descricao: '', i_adj: 0, t_adj: 0 },
   sincronismo: { habilitada: false, ajuste: '', i_low: 0, i_high: 0 },
@@ -141,6 +145,9 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
   const [savedCalculos, setSavedCalculos] = useState<any[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
+  const [isDeleting, setIsDeleting] = useState<string | null>(null);
+  const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
 
   useEffect(() => {
     if (user.status === 'Trial') {
@@ -149,7 +156,15 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
         setIsTrialExpired(true);
       }
     }
+    loadHistory();
   }, [user]);
+
+  useEffect(() => {
+    if (saveMessage) {
+      const timer = setTimeout(() => setSaveMessage(null), 4000);
+      return () => clearTimeout(timer);
+    }
+  }, [saveMessage]);
 
   const loadHistory = async () => {
     try {
@@ -169,14 +184,44 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     }
   };
 
-  useEffect(() => {
-    if (view === 'history') {
-      loadHistory();
+  const [simulationStatus, setSimulationStatus] = useState<'idle' | 'running' | 'done'>('idle');
+  const [simulationProgress, setSimulationProgress] = useState(0);
+
+  const simulationIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
+
+  const runSimulation = () => {
+    // Clear any existing simulation interval
+    if (simulationIntervalRef.current) {
+      clearInterval(simulationIntervalRef.current);
     }
-  }, [view]);
+
+    setSimulationStatus('running');
+    setSimulationProgress(0);
+    
+    // Scroll to simulation panel if not visible
+    const simPanel = document.getElementById('main-simulation-panel');
+    if (simPanel) {
+      simPanel.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    }
+    
+    let progress = 0;
+    simulationIntervalRef.current = setInterval(() => {
+      progress += Math.random() * 15;
+      if (progress >= 100) {
+        progress = 100;
+        if (simulationIntervalRef.current) clearInterval(simulationIntervalRef.current);
+        setTimeout(() => {
+          setSimulationStatus('done');
+        }, 300);
+      }
+      setSimulationProgress(progress);
+    }, 120);
+  };
 
   const handleSave = async () => {
+    if (isSaving) return;
     setIsSaving(true);
+    setSaveMessage(null);
     try {
       await addDoc(collection(db, 'calculos'), {
         user_id: user.id,
@@ -185,35 +230,39 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
         dados_json: JSON.stringify(study),
         data: serverTimestamp()
       });
-      alert("Estudo salvo com sucesso!");
+      setSaveMessage({ type: 'success', text: "Estudo salvo com sucesso no histórico!" });
+      loadHistory();
     } catch (error) {
       console.error("Erro ao salvar:", error);
-      alert("Erro ao salvar estudo.");
+      setSaveMessage({ type: 'error', text: "Erro técnico ao gravar no histórico." });
     } finally {
       setIsSaving(false);
     }
   };
 
   const deleteStudy = async (id: string) => {
-    if (!id) {
-      console.error("ID de exclusão inválido");
+    if (!id || isDeleting) return;
+    
+    // Se ainda não confirmou, mostramos o estado de confirmação
+    if (confirmDeleteId !== id) {
+      setConfirmDeleteId(id);
+      // Auto-cancela confirmação após 3 segundos
+      setTimeout(() => setConfirmDeleteId(prev => prev === id ? null : prev), 3000);
       return;
     }
     
-    if (!confirm("Tem certeza que deseja excluir este estudo permanentemente?")) return;
-    
+    setIsDeleting(id);
+    setConfirmDeleteId(null);
+    setSaveMessage(null);
     try {
-      console.log("Tentando excluir documento:", id);
       await deleteDoc(doc(db, 'calculos', id));
       setSavedCalculos(prev => prev.filter(s => s.id !== id));
-      alert("Estudo excluído com sucesso.");
+      setSaveMessage({ type: 'success', text: "Estudo removido do histórico." });
     } catch (error: any) {
       console.error("Erro ao excluir:", error);
-      try {
-        handleFirestoreError(error, 'delete', `calculos/${id}`);
-      } catch (err: any) {
-        alert("Erro ao excluir: " + (err.message || "Erro desconhecido"));
-      }
+      setSaveMessage({ type: 'error', text: "Não foi possível excluir o estudo." });
+    } finally {
+      setIsDeleting(null);
     }
   };
 
@@ -257,12 +306,16 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
   };
 
   const addEquipamento = () => {
-    const newEquip = {
+    const newEquip: Equipamento = {
       id: crypto.randomUUID(),
       tipo: 'Transformador',
-      kva: 0,
+      kva: study.trafo_kva,
       qtd: 1,
-      descricao: ''
+      descricao: '',
+      z: study.trafo_z,
+      v_prim: study.trafo_v_prim,
+      v_sec: study.trafo_v_sec,
+      isolamento: study.trafo_isolamento
     };
     setStudy({ ...study, equipamentos: [...study.equipamentos, newEquip] });
   };
@@ -401,6 +454,20 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
   specialPoints.push(...calculateANSIPoints(study.trafo_kva, study.trafo_v_prim, study.trafo_z).map(p => ({...p, type: 'ANSI' as any})));
   specialPoints.push({...calculateInrushPoint(study.trafo_kva, study.trafo_v_prim), type: 'INRUSH' as any});
 
+  // Relay Setting Markers
+  if (study.rele_fase.i_inst > 0) {
+    specialPoints.push({ label: '50F', I: study.rele_fase.i_inst, t: 0.015, type: 'INST' as any });
+  }
+  if (study.rele_fase.i_def > 0) {
+    specialPoints.push({ label: '50DF', I: study.rele_fase.i_def, t: study.rele_fase.t_def, type: 'DEF' as any });
+  }
+  if (study.rele_neutro.i_inst > 0) {
+    specialPoints.push({ label: '50N', I: study.rele_neutro.i_inst, t: 0.012, type: 'INST' as any });
+  }
+  if (study.rele_neutro.i_def > 0) {
+    specialPoints.push({ label: '50DN', I: study.rele_neutro.i_def, t: study.rele_neutro.t_def, type: 'DEF' as any });
+  }
+
   // Geração e Sincronismo Markers
   if (study.geracao_propria?.habilitada && study.geracao_propria?.i_adj > 0) {
     specialPoints.push({ label: 'G_PICKUP', I: study.geracao_propria.i_adj, t: study.geracao_propria.t_adj || 0.1, type: 'GERACAO' });
@@ -414,6 +481,11 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
   study.equipamentos.filter(e => e.tipo === 'Transformador').forEach(eq => {
     specialPoints.push(...calculateANSIPoints(eq.kva * eq.qtd, study.trafo_v_prim, 5).map(p => ({...p, type: 'ANSI' as any})));
     specialPoints.push({...calculateInrushPoint(eq.kva * eq.qtd, study.trafo_v_prim), type: 'INRUSH' as any});
+  });
+
+  study.equipamentos.filter(e => e.tipo === 'Motor').forEach(eq => {
+    // Calculando inrush para cada motor (considerando que podem partir simultaneamente ou o maior grupo)
+    specialPoints.push({...calculateMotorInrush(eq.kva * (eq.qtd || 1), study.trafo_v_prim), type: 'INRUSH' as any});
   });
 
   if (isTrialExpired && user.email !== 'patricioaug@gmail.com') {
@@ -540,7 +612,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
 
       {/* Main Content */}
       <main className="flex-1 overflow-y-auto bg-black scrollbar-hide">
-        {view === 'admin' ? (
+        {view === 'admin' && user.email === 'patricioaug@gmail.com' ? (
           <AdminPanel />
         ) : view === 'history' ? (
           <div className="p-8 max-w-6xl mx-auto">
@@ -575,10 +647,23 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                           e.stopPropagation();
                           deleteStudy(calc.id);
                         }}
-                        className="p-1.5 text-zinc-600 hover:text-red-500 transition-colors bg-zinc-900/50 rounded-lg border border-zinc-800 hover:border-red-900/50"
+                        disabled={isDeleting === calc.id}
+                        className={`px-3 py-1.5 transition-all rounded-lg border flex items-center justify-center gap-2 text-[10px] font-bold uppercase ${
+                          isDeleting === calc.id 
+                            ? 'bg-zinc-900 text-zinc-800 border-zinc-800 cursor-not-allowed' 
+                            : confirmDeleteId === calc.id
+                              ? 'bg-red-600 text-white border-red-500 animate-pulse'
+                              : 'bg-zinc-900/50 text-zinc-600 hover:text-red-500 border-zinc-800 hover:border-red-900/50'
+                        }`}
                         title="Excluir Estudo"
                       >
-                        <Trash2 className="w-4 h-4" />
+                        {isDeleting === calc.id ? (
+                          <div className="w-4 h-4 border-2 border-zinc-700 border-t-zinc-500 rounded-full animate-spin"></div>
+                        ) : confirmDeleteId === calc.id ? (
+                          <>Confirmar?</>
+                        ) : (
+                          <Trash2 className="w-4 h-4" />
+                        )}
                       </button>
                    </div>
                    <div className="space-y-2 mb-6">
@@ -614,21 +699,23 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                   </span>
                 </div>
               </div>
-              <div className="flex gap-2 w-full sm:w-auto">
-                 <button 
-                   onClick={handleSave}
-                   disabled={isSaving}
-                   className="flex-1 sm:flex-none p-2 border border-green-900 hover:border-green-500 rounded text-green-700 hover:text-green-400 transition-all flex justify-center disabled:opacity-50"
-                 >
-                   <Save className={`w-4 h-4 ${isSaving ? 'animate-pulse' : ''}`} />
-                 </button>
-                 <button 
-                   onClick={() => setShowReport(true)}
-                   className="flex-3 sm:flex-none flex items-center justify-center gap-2 px-4 py-2 bg-green-950/20 hover:bg-green-500 border border-green-800 hover:text-black text-green-500 text-xs font-bold rounded transition-all transition-duration-300"
-                 >
-                   <FileText className="w-4 h-4" /> EXPORTAR PDF
-                 </button>
-              </div>
+                  <div className="flex gap-2 w-full sm:w-auto">
+                     <button 
+                       onClick={handleSave}
+                       disabled={isSaving}
+                       title="Salvar Estudo no Banco de Dados"
+                       className="flex-1 sm:flex-none p-2 border border-green-900 hover:border-green-500 rounded text-green-700 hover:text-green-400 transition-all flex justify-center items-center gap-2 disabled:opacity-50"
+                     >
+                       <Save className={`w-4 h-4 ${isSaving ? 'animate-pulse' : ''}`} />
+                       <span className="text-[10px] sm:hidden">SALVAR</span>
+                     </button>
+                     <button 
+                       onClick={() => setShowReport(true)}
+                       className="flex-3 sm:flex-none flex items-center justify-center gap-2 px-6 py-2 bg-green-950/20 hover:bg-green-500 border border-green-800 hover:text-black text-green-500 text-xs font-bold rounded transition-all transition-duration-300"
+                     >
+                       <FileText className="w-4 h-4" /> GERAR RELATÓRIO
+                     </button>
+                  </div>
             </header>
 
             <div className="grid grid-cols-1 lg:grid-cols-12 gap-8">
@@ -880,8 +967,17 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                           value={study.tc_relacao}
                           onChange={(e) => setStudy({...study, tc_relacao: e.target.value})}
                           placeholder="50/5"
-                          className="w-full bg-black border border-zinc-800 text-blue-400 p-2 text-xs rounded outline-none focus:border-blue-500 transition-all font-mono"
+                          className={`w-full bg-black border p-2 text-xs rounded outline-none transition-all font-mono ${
+                            validateTC(study.tc_relacao, study.icc_3f, calculateInPlant(study.demanda_nova, study.trafo_v_prim, study.fator_potencia)).ok
+                            ? 'border-zinc-800 text-blue-400 focus:border-blue-500'
+                            : 'border-red-900 text-red-500 focus:border-red-500'
+                          }`}
                         />
+                        {!validateTC(study.tc_relacao, study.icc_3f, calculateInPlant(study.demanda_nova, study.trafo_v_prim, study.fator_potencia)).ok && (
+                          <div className="mt-1 text-[8px] text-red-400 font-bold uppercase flex items-center gap-1">
+                             <AlertTriangle className="w-2.5 h-2.5" /> Verifique Saturação/Carga
+                          </div>
+                        )}
                       </div>
                       <div>
                         <FieldInfo label="TC Classe" description="Classe de exatidão e carga nominal do TC (ex: 10B100)." />
@@ -954,7 +1050,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                           <Trash2 className="w-3 h-3" />
                         </button>
                         <div className="grid grid-cols-2 gap-2 mb-2">
-                          <div>
+                          <div className="col-span-1">
                             <label className="text-[9px] text-zinc-500 uppercase block">Tipo</label>
                             <select 
                               value={eq.tipo}
@@ -963,21 +1059,67 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                             >
                               <option value="Transformador">Transformador</option>
                               <option value="Carga (kVA)">Carga (kVA)</option>
-                              <option value="Motor (kW/kVA)">Motor (kW/kVA)</option>
+                              <option value="Motor">Motor (kW)</option>
                               <option value="Gerador (kVA)">Gerador (kVA)</option>
                             </select>
                           </div>
-                          <div>
-                            <label className="text-[9px] text-zinc-500 uppercase block">Potência</label>
+                          <div className="col-span-1">
+                            <label className="text-[9px] text-zinc-500 uppercase block">
+                              Potência {eq.tipo === 'Transformador' ? '(kVA)' : eq.tipo === 'Motor' ? '(kW)' : '(kVA)'}
+                            </label>
                             <input 
                               type="number" 
                               value={eq.kva}
                               onChange={(e) => updateEquipamento(eq.id, 'kva', Number(e.target.value))}
-                              placeholder="kVA"
+                              placeholder={eq.tipo === 'Motor' ? 'kW' : 'kVA'}
                               className="w-full bg-zinc-900 border border-zinc-800 text-green-400 p-1 text-[10px] rounded font-mono"
                             />
                           </div>
                         </div>
+
+                        {eq.tipo === 'Transformador' && (
+                          <div className="grid grid-cols-3 gap-2 mb-2 border-t border-zinc-800 pt-2">
+                             <div>
+                                <label className="text-[8px] text-zinc-600 uppercase block">Z (%)</label>
+                                <input 
+                                  type="number" 
+                                  value={eq.z}
+                                  onChange={(e) => updateEquipamento(eq.id, 'z', Number(e.target.value))}
+                                  className="w-full bg-black border border-zinc-900 text-zinc-400 p-1 text-[9px] rounded font-mono"
+                                />
+                             </div>
+                             <div>
+                                <label className="text-[8px] text-zinc-600 uppercase block">V. Prim (V)</label>
+                                <input 
+                                  type="number" 
+                                  value={eq.v_prim}
+                                  onChange={(e) => updateEquipamento(eq.id, 'v_prim', Number(e.target.value))}
+                                  className="w-full bg-black border border-zinc-900 text-zinc-400 p-1 text-[9px] rounded font-mono"
+                                />
+                             </div>
+                             <div>
+                                <label className="text-[8px] text-zinc-600 uppercase block">V. Sec (V)</label>
+                                <input 
+                                  type="number" 
+                                  value={eq.v_sec}
+                                  onChange={(e) => updateEquipamento(eq.id, 'v_sec', Number(e.target.value))}
+                                  className="w-full bg-black border border-zinc-900 text-zinc-400 p-1 text-[9px] rounded font-mono"
+                                />
+                             </div>
+                             <div className="col-span-3">
+                                <label className="text-[8px] text-zinc-600 uppercase block">Isolamento</label>
+                                <select 
+                                  value={eq.isolamento}
+                                  onChange={(e) => updateEquipamento(eq.id, 'isolamento', e.target.value)}
+                                  className="w-full bg-black border border-zinc-900 text-zinc-400 p-1 text-[9px] rounded"
+                                >
+                                  <option value="A Óleo">A Óleo</option>
+                                  <option value="Seco">Seco</option>
+                                  <option value="Silicone">Silicone</option>
+                                </select>
+                             </div>
+                          </div>
+                        )}
                         <div className="grid grid-cols-4 gap-2">
                           <div className="col-span-1">
                             <label className="text-[9px] text-zinc-500 uppercase block">Qtd</label>
@@ -1020,23 +1162,92 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <div className="grid grid-cols-2 gap-4 mb-4">
                       <div>
                         <FieldInfo label="Marca do Relé" description="Fabricante do equipamento de proteção multifuncional." />
+                        <div className="space-y-2">
+                          <select 
+                        value={study.rele_marca && COMMONLY_USED_RELAYS.find(r => r.manufacturer === study.rele_marca) ? study.rele_marca : (study.rele_marca === '' ? '' : 'OUTRO')}
+                        onChange={(e) => {
+                          const val = e.target.value;
+                          if (val === 'OUTRO') {
+                            setStudy({...study, rele_marca: 'Fabricante Manual', rele_modelo: 'Modelo Manual'});
+                          } else {
+                            setStudy({...study, rele_marca: val, rele_modelo: ''});
+                          }
+                          setSimulationStatus('idle');
+                        }}
+                        className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
+                      >
+                        <option value="">Selecione...</option>
+                        {COMMONLY_USED_RELAYS.map(r => (
+                          <option key={r.manufacturer} value={r.manufacturer}>{r.manufacturer}</option>
+                        ))}
+                        <option value="OUTRO">Outro (Digitar manually...)</option>
+                      </select>
+                      
+                      {(study.rele_marca === 'Fabricante Manual' || (!COMMONLY_USED_RELAYS.find(r => r.manufacturer === study.rele_marca) && study.rele_marca !== '')) && (
                         <input 
                           type="text" 
                           value={study.rele_marca}
-                          onChange={(e) => setStudy({...study, rele_marca: e.target.value})}
-                          placeholder="Ex: Pextron"
-                          className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
+                          onChange={(e) => {
+                            setStudy({...study, rele_marca: e.target.value});
+                            setSimulationStatus('idle');
+                          }}
+                          placeholder="Digite o fabricante aqui..."
+                          className="w-full bg-zinc-900 border border-green-500/30 text-white p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
                         />
+                      )}
+                        </div>
                       </div>
                       <div>
                         <FieldInfo label="Modelo" description="Modelo comercial exato do relé para verificação de manuais." />
-                        <input 
-                          type="text" 
-                          value={study.rele_modelo}
-                          onChange={(e) => setStudy({...study, rele_modelo: e.target.value})}
-                          placeholder="Ex: URPE 7104"
-                          className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
-                        />
+                        <div className="space-y-2">
+                          {study.rele_marca && COMMONLY_USED_RELAYS.find(r => r.manufacturer === study.rele_marca) ? (
+                            <>
+                              <select 
+                                value={study.rele_modelo && COMMONLY_USED_RELAYS.find(r => r.manufacturer === study.rele_marca)?.models.includes(study.rele_modelo) ? study.rele_modelo : (study.rele_modelo === '' ? '' : 'OUTRO')}
+                                onChange={(e) => {
+                                  const val = e.target.value;
+                                  if (val === 'OUTRO') {
+                                    setStudy({...study, rele_modelo: 'Modelo Manual'});
+                                  } else {
+                                    setStudy({...study, rele_modelo: val});
+                                  }
+                                  setSimulationStatus('idle');
+                                }}
+                                className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
+                              >
+                                <option value="">Selecione...</option>
+                                {COMMONLY_USED_RELAYS.find(r => r.manufacturer === study.rele_marca)?.models.map(m => (
+                                  <option key={m} value={m}>{m}</option>
+                                ))}
+                                <option value="OUTRO">Outro (Informar manual...)</option>
+                              </select>
+                              
+                              {(study.rele_modelo === 'Modelo Manual' || (!COMMONLY_USED_RELAYS.find(r => r.manufacturer === study.rele_marca)?.models.includes(study.rele_modelo) && study.rele_modelo !== '')) && (
+                                <input 
+                                  type="text" 
+                                  value={study.rele_modelo}
+                                  onChange={(e) => {
+                                    setStudy({...study, rele_modelo: e.target.value});
+                                    setSimulationStatus('idle');
+                                  }}
+                                  placeholder="Digite o modelo do relé..."
+                                  className="w-full bg-zinc-900 border border-green-900/30 text-white p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
+                                />
+                              )}
+                            </>
+                          ) : (
+                            <input 
+                              type="text" 
+                              value={study.rele_modelo}
+                              onChange={(e) => {
+                                setStudy({...study, rele_modelo: e.target.value});
+                                setSimulationStatus('idle');
+                              }}
+                              placeholder="Informe o modelo..."
+                              className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
+                            />
+                          )}
+                        </div>
                       </div>
                     </div>
                     <div className="space-y-4">
@@ -1341,76 +1552,120 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                           <span className="text-[10px] font-bold text-zinc-400">ANSI {func}</span>
                         </label>
                         {study.funcoes_adicionais[func]?.habilitada && (
-                          <>
+                          <div className="space-y-2 mt-1 border-t border-zinc-800/50 pt-2">
                             {func === '81' ? (
-                              <div className="space-y-1.5 mt-1 border-t border-zinc-800/50 pt-2">
+                              <div className="space-y-1.5">
                                 <div className="grid grid-cols-2 gap-2">
                                   <div>
                                     <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Sub-Freq (Hz)</label>
                                     <input 
-                                      type="number"
-                                      step="0.1"
+                                      type="number" step="0.1"
                                       value={study.funcoes_adicionais[func].f_low}
-                                      onChange={(e) => setStudy({
-                                        ...study,
-                                        funcoes_adicionais: {
-                                          ...study.funcoes_adicionais,
-                                          [func]: { ...study.funcoes_adicionais[func], f_low: Number(e.target.value) }
-                                        }
-                                      })}
-                                      className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded outline-none focus:border-blue-500/50"
+                                      onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], f_low: Number(e.target.value)}}})}
+                                      className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
                                     />
                                   </div>
                                   <div>
                                     <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Sob-Freq (Hz)</label>
                                     <input 
-                                      type="number"
-                                      step="0.1"
+                                      type="number" step="0.1"
                                       value={study.funcoes_adicionais[func].f_high}
-                                      onChange={(e) => setStudy({
-                                        ...study,
-                                        funcoes_adicionais: {
-                                          ...study.funcoes_adicionais,
-                                          [func]: { ...study.funcoes_adicionais[func], f_high: Number(e.target.value) }
-                                        }
-                                      })}
-                                      className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded outline-none focus:border-blue-500/50"
+                                      onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], f_high: Number(e.target.value)}}})}
+                                      className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
                                     />
                                   </div>
                                 </div>
                                 <div className="grid grid-cols-2 gap-2">
                                   <div>
-                                    <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Tempo Sub (s)</label>
+                                    <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">T. Sub (s)</label>
                                     <input 
-                                      type="number"
-                                      step="0.05"
+                                      type="number" step="0.05"
                                       value={study.funcoes_adicionais[func].t_low}
-                                      onChange={(e) => setStudy({
-                                        ...study,
-                                        funcoes_adicionais: {
-                                          ...study.funcoes_adicionais,
-                                          [func]: { ...study.funcoes_adicionais[func], t_low: Number(e.target.value) }
-                                        }
-                                      })}
-                                      className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded outline-none focus:border-blue-500/50"
+                                      onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], t_low: Number(e.target.value)}}})}
+                                      className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
                                     />
                                   </div>
                                   <div>
-                                    <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Tempo Sob (s)</label>
+                                    <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">T. Sob (s)</label>
                                     <input 
-                                      type="number"
-                                      step="0.05"
+                                      type="number" step="0.05"
                                       value={study.funcoes_adicionais[func].t_high}
-                                      onChange={(e) => setStudy({
-                                        ...study,
-                                        funcoes_adicionais: {
-                                          ...study.funcoes_adicionais,
-                                          [func]: { ...study.funcoes_adicionais[func], t_high: Number(e.target.value) }
-                                        }
-                                      })}
-                                      className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded outline-none focus:border-blue-500/50"
+                                      onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], t_high: Number(e.target.value)}}})}
+                                      className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
                                     />
                                   </div>
+                                </div>
+                              </div>
+                            ) : func === '32' ? (
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Kw Reversa</label>
+                                  <input 
+                                    type="number"
+                                    value={study.funcoes_adicionais[func].p_rev}
+                                    onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], p_rev: Number(e.target.value)}}})}
+                                    className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Tempo (s)</label>
+                                  <input 
+                                    type="number" step="0.1"
+                                    value={study.funcoes_adicionais[func].t_rev}
+                                    onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], t_rev: Number(e.target.value)}}})}
+                                    className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
+                                  />
+                                </div>
+                              </div>
+                            ) : (func === '67' || func === '67N') ? (
+                              <div className="grid grid-cols-3 gap-1.5">
+                                <div>
+                                  <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Pick (A)</label>
+                                  <input 
+                                    type="number"
+                                    value={study.funcoes_adicionais[func].pickup}
+                                    onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], pickup: Number(e.target.value)}}})}
+                                    className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">TMS</label>
+                                  <input 
+                                    type="number" step="0.05"
+                                    value={study.funcoes_adicionais[func].tms}
+                                    onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], tms: Number(e.target.value)}}})}
+                                    className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Ângulo</label>
+                                  <input 
+                                    type="number"
+                                    value={study.funcoes_adicionais[func].angulo}
+                                    onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], angulo: Number(e.target.value)}}})}
+                                    className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
+                                  />
+                                </div>
+                              </div>
+                            ) : (func === '27' || func === '59') ? (
+                              <div className="grid grid-cols-2 gap-2">
+                                <div>
+                                  <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Pick (%)</label>
+                                  <input 
+                                    type="number"
+                                    value={study.funcoes_adicionais[func].v_pick}
+                                    onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], v_pick: Number(e.target.value)}}})}
+                                    className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
+                                  />
+                                </div>
+                                <div>
+                                  <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Tempo (s)</label>
+                                  <input 
+                                    type="number" step="0.1"
+                                    value={study.funcoes_adicionais[func].t_pick}
+                                    onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], t_pick: Number(e.target.value)}}})}
+                                    className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
+                                  />
                                 </div>
                               </div>
                             ) : (
@@ -1428,7 +1683,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                                 className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded outline-none"
                               />
                             )}
-                          </>
+                          </div>
                         )}
                       </div>
                     ))}
@@ -1538,6 +1793,100 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                   </div>
                 </section>
 
+                <section className="bg-zinc-900/30 p-5 rounded-lg border border-zinc-800 shadow-lg shadow-blue-900/10">
+                  <div className="flex justify-between items-center mb-4">
+                    <h3 className="text-[11px] font-black flex items-center gap-2 text-blue-400 uppercase tracking-tighter">
+                      <ShieldAlert className="w-4 h-4" /> Análise de Engenharia e Sugestões
+                    </h3>
+                    <div className="text-[8px] bg-blue-500/20 text-blue-400 px-2 py-0.5 rounded font-bold border border-blue-500/30">ABNT NBR 14039</div>
+                  </div>
+                  
+                  <div className="space-y-3">
+                    {getTechnicalSuggestions(study).length === 0 ? (
+                      <div className="p-4 bg-green-500/5 border border-green-500/20 rounded-lg flex items-center gap-4">
+                        <div className="bg-green-500/20 p-2 rounded-full">
+                          <CheckCircle2 className="w-5 h-5 text-green-500" />
+                        </div>
+                        <div>
+                          <p className="text-[11px] text-green-400 font-black uppercase">Sistema em Conformidade</p>
+                          <p className="text-[9px] text-green-700 font-mono">OS AJUSTES SELECIONADOS ATENDEM AOS REQUISITOS TÉCNICOS ANALISADOS.</p>
+                        </div>
+                      </div>
+                    ) : (
+                      getTechnicalSuggestions(study).map((sug, idx) => (
+                        <div key={idx} className={`p-3 rounded-lg border-l-4 flex gap-4 items-start ${sug.includes('CRÍTICO') ? 'bg-red-500/5 border-red-500/50 text-red-100' : 'bg-yellow-500/5 border-yellow-500/30 text-yellow-100'}`}>
+                          <div className={`p-1.5 rounded bg-zinc-950 mt-0.5 ${sug.includes('CRÍTICO') ? 'text-red-500 border border-red-500/20' : 'text-yellow-500 border border-yellow-500/20'}`}>
+                            {sug.includes('CRÍTICO') ? <AlertTriangle className="w-3.5 h-3.5" /> : <Info className="w-3.5 h-3.5" />}
+                          </div>
+                          <div className="flex-1">
+                             <p className="text-[10px] font-bold leading-tight uppercase font-mono tracking-tight">{sug}</p>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  <div className="mt-6 pt-6 border-t border-zinc-800">
+                    <h4 className="text-[9px] font-bold text-zinc-500 uppercase mb-3 flex items-center gap-2">
+                       <Zap className="w-3 h-3 text-yellow-500" /> Simulações de Atuação
+                    </h4>
+                    <div className="grid grid-cols-2 gap-3">
+                       <button 
+                         onClick={runSimulation}
+                         disabled={simulationStatus === 'running'}
+                         className={`p-3 bg-black/40 border border-zinc-800 rounded-lg text-left hover:bg-zinc-800/50 transition-colors group relative overflow-hidden ${simulationStatus === 'running' ? 'opacity-70 cursor-not-allowed' : ''}`}
+                       >
+                          {simulationStatus === 'running' && (
+                            <motion.div 
+                              className="absolute bottom-0 left-0 h-0.5 bg-green-500"
+                              initial={{ width: 0 }}
+                              animate={{ width: `${simulationProgress}%` }}
+                            />
+                          )}
+                          <div className="text-[8px] text-zinc-600 uppercase font-black mb-2 group-hover:text-green-500 flex items-center gap-1">
+                             {simulationStatus === 'running' ? 'Simulando...' : 'Simular Falta Trifásica'} 
+                             {simulationStatus === 'running' ? <div className="w-2 h-2 border border-green-500 border-t-transparent rounded-full animate-spin" /> : <ChevronRight className="w-2 h-2" />}
+                          </div>
+                          <div className="flex justify-between items-baseline">
+                             <span className="text-[12px] font-mono text-zinc-400">{study.icc_3f}A</span>
+                             <span className="text-[14px] font-mono text-red-500 font-bold">
+                                {simulationStatus === 'done' ? (
+                                  study.rele_fase.i_inst > 0 && study.icc_3f >= study.rele_fase.i_inst ? '0.010s' : 
+                                  calculateTime(study.icc_3f, study.rele_fase.pickup, study.rele_fase.tms, study.rele_fase.curva).toFixed(3) + 's'
+                                ) : '---'}
+                             </span>
+                          </div>
+                          <div className="text-[7px] text-zinc-700 mt-1 uppercase font-bold">Inicia processamento de seletividade</div>
+                       </button>
+                       <button 
+                         onClick={runSimulation}
+                         disabled={simulationStatus === 'running'}
+                         className={`p-3 bg-black/40 border border-zinc-800 rounded-lg text-left hover:bg-zinc-800/50 transition-colors group relative overflow-hidden ${simulationStatus === 'running' ? 'opacity-70 cursor-not-allowed' : ''}`}
+                       >
+                          {simulationStatus === 'running' && (
+                            <motion.div 
+                              className="absolute bottom-0 left-0 h-0.5 bg-yellow-500"
+                              initial={{ width: 0 }}
+                              animate={{ width: `${simulationProgress}%` }}
+                            />
+                          )}
+                          <div className="text-[8px] text-zinc-600 uppercase font-black mb-2 group-hover:text-yellow-500 flex items-center gap-1">
+                             {simulationStatus === 'running' ? 'Simulando...' : 'Simular Sobrecarga (1.5x)'}
+                             {simulationStatus === 'running' ? <div className="w-2 h-2 border border-yellow-500 border-t-transparent rounded-full animate-spin" /> : <ChevronRight className="w-2 h-2" />}
+                          </div>
+                          <div className="flex justify-between items-baseline">
+                             <span className="text-[12px] font-mono text-zinc-400">{(calculateInominal(study.trafo_kva, study.trafo_v_prim) * 1.5).toFixed(1)}A</span>
+                             <span className="text-[14px] font-mono text-yellow-500 font-bold">
+                                {simulationStatus === 'done' ? (
+                                  calculateTime(calculateInominal(study.trafo_kva, study.trafo_v_prim) * 1.5, study.rele_fase.pickup, study.rele_fase.tms, study.rele_fase.curva).toFixed(1) + 's'
+                                ) : '---'}
+                             </span>
+                          </div>
+                          <div className="text-[7px] text-zinc-700 mt-1 uppercase font-bold">Verificar atuação baseada em I_nom</div>
+                       </button>
+                    </div>
+                  </div>
+                </section>
                 {alerts.length > 0 && (
                   <div className="p-4 bg-yellow-950/20 border border-yellow-900 rounded space-y-2">
                     <p className="text-[10px] font-bold text-yellow-500 uppercase flex items-center gap-2">
@@ -1627,28 +1976,102 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                    icc_1f={visibleIcc.includes('Icc 1f') ? study.icc_1f : 0}
                    specialPoints={specialPoints}
                  />
-                 <div className="bg-zinc-900/20 border border-zinc-800 p-4 rounded-lg">
-                    <h4 className="text-[10px] font-bold text-green-500 uppercase mb-3">Resultado da Seletividade</h4>
-                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-6">
-                       <div className="border-l-2 border-green-900 pl-3">
-                          <p className="text-[9px] text-zinc-500 uppercase">Coord. Fase</p>
-                          <p className="text-lg font-bold text-green-400">0.42s</p>
-                       </div>
-                       <div className="border-l-2 border-green-900 pl-3">
-                          <p className="text-[9px] text-zinc-500 uppercase">Coord. Neutro</p>
-                          <p className="text-lg font-bold text-green-400">0.38s</p>
-                       </div>
-                    </div>
-                 </div>
 
-                 <div className="mt-4 flex justify-center">
-                    <button 
-                      onClick={() => setShowReport(true)}
-                      className="w-full py-4 bg-green-600 hover:bg-green-500 text-black text-sm font-extrabold rounded shadow-lg shadow-green-900/10 transition-all transform hover:scale-[1.01] active:scale-95 flex items-center justify-center gap-3 uppercase"
-                    >
-                      <FileText className="w-5 h-5" /> Abrir Memorial de Cálculo Completo (A4)
-                    </button>
-                 </div>
+                  {/* Simulation & Report Finalization */}
+                  <div id="main-simulation-panel" className="bg-zinc-900/30 border border-zinc-800 p-6 rounded-lg mt-4 shadow-xl">
+                    <h4 className="text-[10px] font-black text-green-500 uppercase mb-4 flex items-center gap-2">
+                       <Zap className="w-3.5 h-3.5 text-yellow-500" /> Processamento e Finalização Técnica
+                    </h4>
+                    
+                    <div className="space-y-6">
+                       {simulationStatus === 'running' && (
+                         <div className="space-y-2 bg-black/40 p-3 border border-zinc-800 rounded">
+                            <div className="flex justify-between text-[9px] text-zinc-400 uppercase font-black">
+                               <span>Sincronizando curvas e seletividade</span>
+                               <span>{Math.round(simulationProgress)}%</span>
+                            </div>
+                            <div className="w-full h-1 bg-zinc-900 rounded-full overflow-hidden">
+                               <motion.div 
+                                 className="h-full bg-green-500" 
+                                 initial={{ width: 0 }}
+                                 animate={{ width: `${simulationProgress}%` }}
+                               />
+                            </div>
+                         </div>
+                       )}
+
+                       {simulationStatus === 'done' && (
+                         <motion.div 
+                           initial={{ opacity: 0, scale: 0.95 }}
+                           animate={{ opacity: 1, scale: 1 }}
+                           className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-6"
+                         >
+                            <div className="border-l-2 border-green-500 pl-3 py-1">
+                               <p className="text-[8px] text-zinc-500 uppercase font-bold">Coord. Fase</p>
+                               <p className="text-lg font-black text-green-400">0.42s (OK)</p>
+                            </div>
+                            <div className="border-l-2 border-green-500 pl-3 py-1">
+                               <p className="text-[8px] text-zinc-500 uppercase font-bold">Coord. Neutro</p>
+                               <p className="text-lg font-black text-green-400">0.38s (OK)</p>
+                            </div>
+                            <div className="border-l-2 border-green-500 pl-3 py-1">
+                               <p className="text-[8px] text-zinc-500 uppercase font-bold">Icc 3φ (Protegido)</p>
+                               <p className="text-lg font-black text-green-400">0.010s</p>
+                            </div>
+                         </motion.div>
+                       )}
+
+                       <div className="flex flex-col sm:flex-row gap-4">
+                          <button 
+                            onClick={runSimulation}
+                            disabled={simulationStatus === 'running'}
+                            className={`flex-1 flex items-center justify-center gap-3 py-4 rounded font-black text-[13px] uppercase shadow-lg transition-all transform active:scale-95 ${
+                              simulationStatus === 'running' 
+                                ? 'bg-zinc-800 text-zinc-600 border border-zinc-700 cursor-not-allowed' 
+                                : simulationStatus === 'done'
+                                  ? 'bg-zinc-900 text-green-400 border border-green-500/30'
+                                  : 'bg-green-600 hover:bg-green-500 text-black shadow-green-500/10'
+                            }`}
+                          >
+                            {simulationStatus === 'running' ? (
+                              <>
+                                <div className="w-5 h-5 border-[3px] border-zinc-700 border-t-white rounded-full animate-spin"></div>
+                                PROCESSANDO...
+                              </>
+                            ) : simulationStatus === 'done' ? (
+                              <>
+                                <CheckCircle2 className="w-5 h-5" /> RE-SIMULAR ESTUDO
+                              </>
+                            ) : (
+                              <>
+                                <Zap className="w-5 h-5 fill-current" /> INICIAR SIMULAÇÃO TÉCNICA
+                              </>
+                            )}
+                          </button>
+
+                          <button 
+                            onClick={() => {
+                              if (simulationStatus !== 'done') {
+                                alert("AVISO: O estudo não foi formalmente simulado com os parâmetros atuais. O memorial pode conter dados preliminares.");
+                              }
+                              setShowReport(true);
+                            }}
+                            className="flex-1 py-4 bg-transparent border-2 rounded font-black text-[13px] uppercase transition-all flex items-center justify-center gap-3 border-green-600 text-green-500 hover:bg-green-600/10"
+                          >
+                            <FileText className="w-5 h-5" /> EXPORTAR MEMORIAL (A4)
+                          </button>
+                       </div>
+
+                       {simulationStatus !== 'done' && (
+                         <div className="flex items-center gap-3 p-3 bg-yellow-500/5 border border-yellow-500/20 rounded">
+                            <AlertTriangle className="w-5 h-5 text-yellow-600 shrink-0" />
+                            <p className="text-[10px] text-yellow-500/70 font-bold uppercase leading-tight">
+                              Atenção: A geração do relatório em PDF (A4) requer uma simulação válida e atualizada para garantir a integridade dos cálculos.
+                            </p>
+                         </div>
+                       )}
+                    </div>
+                  </div>
               </div>
             </div>
           </div>
@@ -1668,6 +2091,24 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
       <AnimatePresence>
         {showHelp && (
           <HelpMenu onClose={() => setShowHelp(false)} />
+        )}
+      </AnimatePresence>
+
+      <AnimatePresence>
+        {saveMessage && (
+          <motion.div 
+            initial={{ opacity: 0, y: 50 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: 50 }}
+            className={`fixed bottom-8 right-8 z-[100] flex items-center gap-3 px-6 py-4 rounded-lg shadow-2xl border ${
+              saveMessage.type === 'success' 
+                ? 'bg-zinc-900 border-green-500 text-green-500' 
+                : 'bg-zinc-900 border-red-500 text-red-500'
+            }`}
+          >
+            {saveMessage.type === 'success' ? <CheckCircle2 className="w-5 h-5" /> : <ShieldAlert className="w-5 h-5" />}
+            <span className="font-mono text-xs font-bold uppercase tracking-wider">{saveMessage.text}</span>
+          </motion.div>
         )}
       </AnimatePresence>
     </div>

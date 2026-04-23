@@ -46,7 +46,27 @@ export const HelpMenu: React.FC<HelpMenuProps> = ({ onClose }) => {
         <div className="flex-1 overflow-y-auto p-6 space-y-8 custom-scrollbar">
           <section>
             <h3 className="text-sm font-bold text-green-500 mb-4 flex items-center gap-2 uppercase">
-              <Info className="w-4 h-4" /> O que o App faz?
+              <Info className="w-4 h-4" /> Funcionalidades Incluídas
+            </h3>
+            <div className="grid grid-cols-2 gap-3 mb-6">
+              {[
+                "Cálculo automático de Inrush e ANSI",
+                "Gráfico de Coordenação Interativo",
+                "Seletividade Cronométrica e Amperimétrica",
+                "Verificação de Saturação de TC",
+                "Simulador de Falta e Sobrecarga",
+                "Relatórios A4 Normativos (CEMIG e Geral)",
+                "Banco de dados de Relés Comerciais",
+                "Entrada manual de Fabricantes/Modelos"
+              ].map((f, i) => (
+                <div key={i} className="flex items-center gap-2 text-[10px] text-zinc-300 font-mono">
+                  <CheckCircle2 className="w-3 h-3 text-green-500" /> {f}
+                </div>
+              ))}
+            </div>
+            
+            <h3 className="text-sm font-bold text-green-500 mb-4 flex items-center gap-2 uppercase">
+              <Info className="w-4 h-4" /> Sobre o Aplicativo
             </h3>
             <p className="text-sm text-zinc-400 leading-relaxed">
               Este aplicativo é uma ferramenta profissional para engenheiros eletricistas realizarem o 

@@ -1,9 +1,8 @@
 import React, { useRef } from 'react';
 import { CoordChart } from './CoordChart';
-import { jsPDF } from 'jspdf';
-import html2canvas from 'html2canvas';
-import { Copy, FileDown, Printer, X, FileText } from 'lucide-react';
+import { Copy, Printer, X, FileText, Shield, Info, Zap, AlertTriangle } from 'lucide-react';
 import { Concessionaria } from '../constants/concessionarias';
+import { getTechnicalSuggestions, calculateInominal, calculateInPlant, validateTC } from '../lib/protection-utils';
 
 interface ReportProps {
   study: any;
@@ -21,8 +20,7 @@ export const ReportView: React.FC<ReportProps> = ({ study, concessionaria, onClo
     const calculateScale = () => {
       if (window.innerWidth < 800) {
         const a4WidthMm = 210;
-        const screenWidthPx = window.innerWidth - 40; // Margem de segurança
-        // Converter mm para px roughly (96 dpi / 25.4 mm por polegada)
+        const screenWidthPx = window.innerWidth - 40; 
         const a4WidthPx = (a4WidthMm * 96) / 25.4;
         const newScale = Math.min(1, screenWidthPx / a4WidthPx);
         setPreviewScale(newScale);
@@ -36,91 +34,169 @@ export const ReportView: React.FC<ReportProps> = ({ study, concessionaria, onClo
     return () => window.removeEventListener('resize', calculateScale);
   }, []);
 
-  const handleExportPDF = async () => {
-    if (!reportRef.current) return;
-    
-    const canvas = await html2canvas(reportRef.current, {
-      scale: 2,
-      useCORS: true,
-      backgroundColor: '#ffffff',
-      onclone: (clonedDoc) => {
-        // Process styles to remove oklch which crashes html2canvas parser
-        const styleTags = clonedDoc.getElementsByTagName('style');
-        for (let i = 0; i < styleTags.length; i++) {
-          const style = styleTags[i];
-          if (style.innerHTML) {
-            style.innerHTML = style.innerHTML.replace(/oklch\([^)]+\)/g, '#71717a');
-          }
-        }
-      }
-    });
-    
-    const imgData = canvas.toDataURL('image/png');
-    const pdf = new jsPDF({
-      orientation: 'portrait',
-      unit: 'mm',
-      format: 'a4'
-    });
-    
-    const imgProps = pdf.getImageProperties(imgData);
-    const pdfWidth = pdf.internal.pageSize.getWidth();
-    const pdfHeight = (imgProps.height * pdfWidth) / imgProps.width;
-    
-    pdf.addImage(imgData, 'PNG', 0, 0, pdfWidth, pdfHeight);
-    pdf.save(`${study.projeto.replace(/\s+/g, '_')}_REPORT.pdf`);
-  };
+  const handleCopyData = () => {
+    const equipamentosRef = study.equipamentos.map((eq: any) => 
+      `- ${eq.tipo}: ${eq.tipo === 'Motor' ? eq.kva + 'kW' : eq.kva + 'kVA'}, Qtd: ${eq.qtd}, Desc: ${eq.descricao || 'N/A'}`
+    ).join('\n') || 'Nenhum equipamento adicional listado.';
 
-  const handleCopyText = () => {
     const text = `
-SISTEMA COORDENOGRAMA - MEMORIAL DE CÁLCULO
-PROJETO: ${study.projeto}
-PROPRIETÁRIO: ${study.proprietario}
-ENDEREÇO: ${study.endereco}
-CONCESSIONÁRIA: ${concessionaria?.nome}
-DATA: ${new Date().toLocaleDateString()}
+DADOS DO ESTUDO DE PROTEÇÃO E SELETIVIDADE
+==========================================
 
-RELÉ DE PROTEÇÃO:
-- Marca: ${study.rele_marca || '---'}
-- Modelo: ${study.rele_modelo || '---'}
+1. IDENTIFICAÇÃO DO PROJETO
+---------------------------
+Projeto: ${study.projeto}
+Proprietário: ${study.proprietario}
+Endereço: ${study.endereco}
+CNPJ: ${study.cnpj_proprietario}
+Cód. Instalação: ${study.codigo_instalacao || 'N/A'}
 
-DEMANDA:
-- Contratada: ${study.demanda_contratada} kW
-- Projetada: ${study.demanda_nova} kW
-- Fator de Potência: ${study.fator_potencia}
+2. RESPONSÁVEL TÉCNICO
+---------------------------
+Engenheiro: ${study.rt_nome}
+CREA/CFT: ${study.rt_crea}
+ART Número: ${study.art_numero}
 
-DADOS DO EQUIPAMENTO PRINCIPAL:
-- Trafo: ${study.trafo_kva} kVA
-- Impedância Percentual: ${study.trafo_z}%
-- Impedância Calculada (Z): ${((study.trafo_z / 100) * (Math.pow(study.trafo_v_prim, 2) / (study.trafo_kva * 1000))).toFixed(4)} Ω
-- Tensão: ${study.trafo_v_prim}V / ${study.trafo_v_sec}V
+3. DADOS DO SISTEMA E CONCESSIONÁRIA
+---------------------------
+Concessionária: ${concessionaria?.nome || 'Não definida'} (${concessionaria?.estado})
+Demanda Contratada: ${study.demanda_contratada} kW
+Demanda Nova: ${study.demanda_nova} kW
+Fator de Potência: ${study.fator_potencia}
+Trafo Principal: ${study.trafo_kva} kVA | Z: ${study.trafo_z}% | ${study.trafo_v_prim}/${study.trafo_v_sec} V
+Icc 3phi: ${study.icc_3f} A | Icc 1phi: ${study.icc_1f} A
+Relação TC: ${study.tc_relacao} | Classe TC: ${study.tc_classe}
 
-EQUIPAMENTOS ADICIONAIS:
-${study.equipamentos.length > 0 ? study.equipamentos.map((e: any) => `- ${e.qtd}x ${e.tipo} (${e.kva} kVA/kW) - ${e.descricao}`).join('\n') : 'Nenhum'}
+4. RELAÇÃO DE EQUIPAMENTOS
+---------------------------
+${equipamentosRef}
 
-AJUSTES DE PROTEÇÃO (51/51N):
-FASE (51):
-- Pickup: ${study.rele_fase.pickup} A
-- TMS/Dial: ${study.rele_fase.tms}
+5. PARAMETRIZAÇÃO DO RELÉ (ANSI 50/51)
+---------------------------
+UNIDADE DE FASE (ANSI 50/51):
+- Pickup (51): ${study.rele_fase.pickup} A
 - Curva: ${study.rele_fase.curva}
+- Dial / TMS: ${study.rele_fase.tms}
+- Tempo Definido (51/50DT): ${study.rele_fase.i_def} A @ ${study.rele_fase.t_def} s
+- Instantâneo (50): ${study.rele_fase.i_inst > 0 ? study.rele_fase.i_inst + ' A' : 'DESABILITADO'}
 
-NEUTRO (51N):
-- Pickup: ${study.rele_neutro.pickup} A
-- TMS/Dial: ${study.rele_neutro.tms}
+UNIDADE DE NEUTRO (ANSI 50/51N):
+- Pickup (51N): ${study.rele_neutro.pickup} A
 - Curva: ${study.rele_neutro.curva}
+- Dial / TMS: ${study.rele_neutro.tms}
+- Tempo Definido (51N/50NDT): ${study.rele_neutro.i_def} A @ ${study.rele_neutro.t_def} s
+- Instantâneo (50N): ${study.rele_neutro.i_inst > 0 ? study.rele_neutro.i_inst + ' A' : 'DESABILITADO'}
 
-COORDENAÇÃO:
-- Margem Fase: 0.42s (OK)
-- Margem Neutro: 0.38s (OK)
+Gerado em: ${new Date().toLocaleString('pt-BR')}
+Versão do Sistema: 1.1.0 PRO
+    `.trim();
 
-OBSERVAÇÕES:
-${study.observacoes || 'Sem observações.'}
-    `;
-    navigator.clipboard.writeText(text.trim());
-    alert('Dados copiados para a área de transferência!');
+    navigator.clipboard.writeText(text);
+    alert('Relatório completo copiado para a área de transferência!');
   };
 
   return (
-    <div className="fixed inset-0 bg-black z-50 flex flex-col items-center overflow-y-auto pb-40">
+    <div className="fixed inset-0 bg-zinc-950 z-50 flex flex-col items-center overflow-y-auto pb-40 scrollbar-hide">
+      <style>{`
+        @media print {
+          @page {
+            size: A4;
+            margin: 15mm;
+          }
+          body {
+            background: white;
+            margin: 0;
+            padding: 0;
+          }
+          .no-print { display: none !important; }
+          .page-break-before-always {
+            page-break-before: always;
+          }
+          #printable-report {
+            visibility: visible;
+            position: static;
+            width: 100% !important;
+            padding: 0 !important;
+            box-shadow: none !important;
+            margin: 0 !important;
+          }
+          /* Esconde tudo exceto o report */
+          body > :not(.report-container-parent) { display: none !important; }
+          .report-container-parent { display: block !important; }
+        }
+        
+        #printable-report {
+          padding: 25mm !important;
+          background-color: white;
+          color: black;
+          font-size: 11px;
+          line-height: 1.5;
+        }
+
+        .report-section-title {
+          font-family: 'Inter', sans-serif;
+          font-weight: 800;
+          font-size: 14px;
+          border-left: 6px solid #000;
+          padding-left: 12px;
+          margin: 40px 0 20px 0;
+          text-transform: uppercase;
+          color: #000;
+          display: block;
+          clear: both;
+          page-break-after: avoid;
+        }
+
+        .report-section {
+          margin-bottom: 40px;
+          display: block;
+          clear: both;
+          page-break-inside: avoid;
+        }
+
+        .calc-table {
+          width: 100%;
+          border-collapse: separate;
+          border-spacing: 12px 0;
+          margin: 0 -12px;
+        }
+
+        .calc-box {
+          border: 1px solid #000;
+          padding: 12px;
+          background-color: #fff;
+          font-family: 'JetBrains Mono', monospace;
+          font-size: 9px;
+          line-height: 1.6;
+          vertical-align: top;
+        }
+
+        .calc-formula {
+          color: #2563eb;
+          font-weight: bold;
+          margin-bottom: 4px;
+        }
+
+        .report-table {
+          width: 100%;
+          border-collapse: collapse;
+          margin-bottom: 16px;
+        }
+
+        .report-table th, .report-table td {
+          border: 1px solid #d1d5db;
+          padding: 6px 10px;
+          text-align: left;
+          font-size: 9px;
+        }
+
+        .report-table th {
+          background: #f3f4f6;
+          font-weight: bold;
+          text-transform: uppercase;
+        }
+      `}</style>
+      
       {/* Controls - Top */}
       <div className="w-full bg-[#18181be6] backdrop-blur-md sticky top-0 z-[60] border-b border-[#27272a] p-4 mb-6">
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row gap-4 justify-between items-center text-white">
@@ -129,16 +205,26 @@ ${study.observacoes || 'Sem observações.'}
                <FileText className="w-5 h-5 text-black" />
              </div>
              <div>
-               <h2 className="text-sm font-bold uppercase tracking-tight">Memorial de Cálculo Técnico</h2>
+               <h2 className="text-sm font-bold uppercase tracking-tight">Relatório Técnico - Seletividade</h2>
                <p className="text-[10px] text-[#a1a1aa] uppercase font-mono">{study.projeto}</p>
              </div>
           </div>
-          <div className="flex gap-2 sm:gap-4 w-full sm:w-auto">
+          <div className="flex gap-2 sm:gap-4 w-full sm:w-auto items-center">
+            <p className="hidden lg:block text-[9px] text-[#71717a] max-w-[200px] text-right leading-tight italic">
+              A função de imprimir somente funcionará na versão web: 
+              <a href="https://coordenograma.vercel.app" target="_blank" rel="noopener noreferrer" className="text-green-500 hover:underline block font-bold">coordenograma.vercel.app</a>
+            </p>
             <button 
-              onClick={handleExportPDF}
+              onClick={handleCopyData}
+              className="whitespace-nowrap flex items-center gap-2 px-6 py-2.5 bg-[#27272a] hover:bg-[#3f3f46] text-[#fafafa] font-bold text-xs rounded border border-[#3f3f46] transition-all flex-1 sm:flex-none justify-center"
+            >
+              <Copy className="w-4 h-4" /> COPIAR DADOS
+            </button>
+            <button 
+              onClick={() => window.print()}
               className="whitespace-nowrap flex items-center gap-2 px-6 py-2.5 bg-[#16a34a] hover:bg-[#22c55e] text-black font-bold text-xs rounded shadow-lg shadow-[#064e3b33] transition-all flex-1 sm:flex-none justify-center"
             >
-              <FileDown className="w-4 h-4" /> EXPORTAR PDF
+              <Printer className="w-4 h-4" /> IMPRIMIR
             </button>
             <button 
               onClick={onClose}
@@ -157,15 +243,15 @@ ${study.observacoes || 'Sem observações.'}
             transform: `scale(${previewScale})`, 
             transformOrigin: 'top center',
             width: '210mm',
-            // O container precisa compensar a altura após scale origin-top
             marginBottom: `-${(1 - previewScale) * 100}%` 
           }}
           className="bg-white shadow-[0_0_100px_rgba(0,0,0,0.8)]"
         >
           <div 
             ref={reportRef} 
-            className="p-[20mm] text-black font-serif bg-white"
-            style={{ width: '210mm', minHeight: '297mm', boxSizing: 'border-box', overflow: 'hidden' }}
+            id="printable-report"
+            className="p-[15mm] text-black bg-white"
+            style={{ width: '210mm', minHeight: '297mm', boxSizing: 'border-box' }}
           >
             {concessionaria?.id === 'cemig_mg' ? (
               <CemigReport study={study} concessionaria={concessionaria} curves={curves} specialPoints={specialPoints} />
@@ -177,392 +263,438 @@ ${study.observacoes || 'Sem observações.'}
       </div>
 
       {/* Final Controls - Bottom */}
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-[#18181be6] backdrop-blur-md border border-[#3f3f46] px-6 py-3 rounded-full shadow-2xl flex gap-6 items-center z-[60]">
-          <button 
-            onClick={() => window.print()}
-            className="flex items-center gap-2 text-[#d4d4d8] hover:text-[#4ade80] text-xs font-bold uppercase transition-colors"
-          >
-            <Printer className="w-4 h-4" /> Imprimir
-          </button>
-          <div className="w-px h-4 bg-[#3f3f46]"></div>
-          <button 
-            onClick={onClose}
-            className="text-[#a1a1aa] hover:text-white text-xs font-bold uppercase transition-colors"
-          >
-            Fechar Relatório
-          </button>
+      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-[#18181be6] backdrop-blur-md border border-[#3f3f46] px-6 py-3 rounded-full shadow-2xl flex flex-col items-center gap-2 z-[60] no-print">
+          <div className="flex gap-6 items-center">
+            <button 
+              onClick={handleCopyData}
+              className="flex items-center gap-2 text-[#d4d4d8] hover:text-[#fafafa] text-xs font-bold uppercase transition-colors"
+            >
+              <Copy className="w-4 h-4" /> Copiar
+            </button>
+            <div className="w-px h-4 bg-[#3f3f46]"></div>
+            <button 
+              onClick={() => window.print()}
+              className="flex items-center gap-2 text-[#d4d4d8] hover:text-[#4ade80] text-xs font-bold uppercase transition-colors"
+            >
+              <Printer className="w-4 h-4" /> Imprimir
+            </button>
+            <div className="w-px h-4 bg-[#3f3f46]"></div>
+            <button 
+              onClick={onClose}
+              className="text-[#a1a1aa] hover:text-white text-xs font-bold uppercase transition-colors"
+            >
+              Fechar Relatório
+            </button>
+          </div>
+          <p className="text-[8px] text-[#71717a] italic text-center w-max">
+            Impressão/PDF via Web: <a href="https://coordenograma.vercel.app" target="_blank" rel="noopener noreferrer" className="text-green-500 font-bold hover:underline">coordenograma.vercel.app</a>
+          </p>
+      </div>
+    </div>
+  );
+};
+const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) => {
+  const In = study.trafo_kva / (Math.sqrt(3) * study.trafo_v_prim / 1000);
+  const tcRatioStr = study.tc_relacao || '50/5';
+  const InomPlanta = calculateInPlant(study.demanda_nova, study.trafo_v_prim, study.fator_potencia);
+  const tcValidation = validateTC(tcRatioStr, study.icc_3f, InomPlanta);
+  const tcSaturationLevel = study.icc_3f / (parseFloat(tcRatioStr.split('/')[0]) || 1);
+
+  return (
+    <div className="font-sans leading-tight p-[15mm]">
+      {/* Header */}
+      <div className="flex justify-between items-center border-b-2 border-black pb-4 mb-6">
+        <div className="flex items-center gap-4">
+          <Shield className="w-10 h-10 text-black" />
+          <div>
+            <h1 className="text-xl font-black uppercase tracking-tight">Estudo de Coordenação e Seletividade</h1>
+            <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest leading-none mt-1">Memorial Descritivo e de Cálculo</p>
+          </div>
+        </div>
+        <div className="text-right">
+          <p className="text-[10px] font-bold text-zinc-400 uppercase">Data de Emissão</p>
+          <p className="text-xs font-black">{new Date().toLocaleDateString('pt-BR')}</p>
+        </div>
+      </div>
+
+      {/* Seção 1: Identificação */}
+      <section className="report-section">
+        <h3 className="report-section-title">1. Identificação do Projeto</h3>
+        <table className="w-full text-[10px] border-collapse">
+          <tbody>
+            <tr>
+              <td className="w-1/4 py-1.5 border-b border-zinc-200 font-bold text-zinc-500 uppercase">Projeto:</td>
+              <td className="py-1.5 border-b border-zinc-200 font-black uppercase text-zinc-900">{study.projeto}</td>
+              <td className="w-1/4 py-1.5 border-b border-zinc-200 font-bold text-zinc-500 uppercase pl-4">Responsável:</td>
+              <td className="py-1.5 border-b border-zinc-200 font-black uppercase text-zinc-900">{study.rt_nome}</td>
+            </tr>
+            <tr>
+              <td className="py-1.5 border-b border-zinc-200 font-bold text-zinc-500 uppercase">Cliente:</td>
+              <td className="py-1.5 border-b border-zinc-200 font-black uppercase text-zinc-900">{study.proprietario}</td>
+              <td className="py-1.5 border-b border-zinc-200 font-bold text-zinc-500 uppercase pl-4">Concessionária:</td>
+              <td className="py-1.5 border-b border-zinc-200 font-black uppercase text-zinc-900">{concessionaria?.nome}</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      {/* Seção 2: Memória de Cálculo Operacional */}
+      <section className="report-section">
+        <h3 className="report-section-title">2. Memória de Cálculo do Sistema</h3>
+        <table className="calc-table">
+          <tbody>
+            <tr>
+              <td className="calc-box w-1/2">
+                <p className="calc-formula text-[10px]">In_Trafo = S / (V_prim * √3)</p>
+                <p>Calculado: {study.trafo_kva}kVA / ({(study.trafo_v_prim/1000).toFixed(2)}kV * 1.732)</p>
+                <p className="font-bold mt-1 text-[11px]">Resultado: {In.toFixed(2)} A</p>
+              </td>
+              <td className="calc-box w-1/2">
+                <p className="calc-formula text-[10px]">In_Planta = Demanda_kW / (V_prim * √3 * FP)</p>
+                <p>Calculado: {study.demanda_nova}kW / ({(study.trafo_v_prim/1000).toFixed(2)}kV * 1.732 * {study.fator_potencia})</p>
+                <p className="font-bold mt-1 text-[11px]">Resultado: {InomPlanta.toFixed(2)} A</p>
+              </td>
+            </tr>
+            <tr className="h-4"><td></td></tr>
+            <tr>
+              <td className="calc-box w-1/2">
+                <p className="calc-formula text-[10px]">Ponto ANSI (Limite Térmico/Mecânico)</p>
+                <p>I_ansi = (100 / Z%) * In_trafo</p>
+                <p>I_ansi = (100 / {study.trafo_z}) * {In.toFixed(2)} = {(In * (100 / study.trafo_z)).toFixed(2)}A</p>
+              </td>
+              <td className="calc-box w-1/2">
+                <p className="calc-formula text-[10px]">Ponto Inrush (10x In @ 100ms)</p>
+                <p>I_inrush = 10 * {In.toFixed(2)} A</p>
+                <p className="font-bold mt-1 text-[11px]">Resultado: {(In * 10).toFixed(2)} A</p>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      {/* Seção 2.1: Relação de Equipamentos */}
+      <section className="report-section">
+        <h3 className="report-section-title">2.1. Relação de Equipamentos Instalados</h3>
+        <table className="report-table">
+          <thead>
+            <tr>
+              <th>EQUIPAMENTO</th>
+              <th>POTÊNCIA</th>
+              <th>QTD</th>
+              <th>DETALHES</th>
+            </tr>
+          </thead>
+          <tbody>
+            {study.equipamentos.length > 0 ? study.equipamentos.map((eq: any, idx: number) => (
+              <tr key={idx}>
+                <td className="font-bold">{eq.tipo}</td>
+                <td>{eq.kva} {eq.tipo === 'Motor' ? 'kW' : 'kVA'}</td>
+                <td>{eq.qtd}</td>
+                <td className="text-[8px]">
+                  {eq.tipo === 'Transformador' && `Z: ${eq.z}% | ${eq.v_prim/1000}/${eq.v_sec}kV`}
+                  {eq.tipo === 'Motor' && `Partida Direta/Estrela`}
+                  {!['Transformador', 'Motor'].includes(eq.tipo) && 'Carga balanceada'}
+                </td>
+              </tr>
+            )) : (
+              <tr>
+                <td colSpan={4} className="text-center py-2 text-zinc-400 italic font-mono text-[9px]">
+                  Nenhum equipamento adicional declarado além do transformador principal.
+                </td>
+              </tr>
+            )}
+          </tbody>
+        </table>
+      </section>
+
+      <div className="page-break-after-auto"></div>
+
+      {/* Seção 3: Coordenograma */}
+      <section className="report-section page-break-before-always">
+        <h3 className="report-section-title">3. Coordenograma de Proteção</h3>
+        <div className="border-2 border-black h-[450px] w-full bg-white flex items-center justify-center p-4">
+           <div className="w-full h-full">
+              <CoordChart 
+                curves={curves} 
+                icc_3f={study.icc_3f} 
+                icc_1f={study.icc_1f} 
+                specialPoints={specialPoints} 
+              />
+           </div>
+        </div>
+        <p className="text-[7px] text-zinc-400 mt-2 uppercase text-center font-mono italic">Gráfico decorrente das configurações de pickup e TMS informados na seção 4.</p>
+      </section>
+
+      {/* Seção 4: Ajustes de Proteção */}
+      <section className="mb-6">
+        <h3 className="report-section-title">4. Tabela de Ajustes (ANSI 50/51)</h3>
+        <table className="report-table">
+          <thead>
+            <tr>
+              <th>ELEMENTO</th>
+              <th>FUNÇÃO</th>
+              <th>PICKUP (A)</th>
+              <th>CURVA</th>
+              <th>TMS</th>
+              <th>INST (A)</th>
+              <th>REL. TC</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td className="font-bold">FASE</td>
+              <td>50/51</td>
+              <td className="font-mono">{study.rele_fase.pickup}</td>
+              <td className="uppercase">{study.rele_fase.curva.replace('_', ' ')}</td>
+              <td className="font-mono">{study.rele_fase.tms}</td>
+              <td className="font-mono">{study.rele_fase.i_inst || '---'}</td>
+              <td className="font-mono">{study.tc_relacao}</td>
+            </tr>
+            <tr>
+              <td className="font-bold">NEUTRO</td>
+              <td>50/51N</td>
+              <td className="font-mono">{study.rele_neutro.pickup}</td>
+              <td className="uppercase">{study.rele_neutro.curva.replace('_', ' ')}</td>
+              <td className="font-mono">{study.rele_neutro.tms}</td>
+              <td className="font-mono">{study.rele_neutro.i_inst || '---'}</td>
+              <td className="font-mono">{study.tc_relacao}</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      {/* Seção 5: Verificação de Saturação e Adequação */}
+      <section className="report-section">
+        <h3 className="report-section-title">5. Verificação de Conexão e Saturação (TC)</h3>
+        <table className="calc-table">
+          <tbody>
+            <tr>
+              <td className="calc-box w-1/2">
+                <p className="calc-formula text-[10px]">Critério de Saturação</p>
+                <p>Fator (F) = Icc_max / I_tc_prim</p>
+                <p>F = {study.icc_3f}A / {(study.tc_relacao.split('/')[0])}A = {tcSaturationLevel.toFixed(2)}x</p>
+                <p className={tcSaturationLevel <= 20 ? 'text-green-600 font-bold' : 'text-red-600 font-bold'}>
+                  {tcSaturationLevel <= 20 ? 'Status: Conforme (F < 20)' : 'Status: Risco de Saturação (F > 20)'}
+                </p>
+              </td>
+              <td className="calc-box w-1/2">
+                <p className="calc-formula text-[10px]">Critério de Carga</p>
+                <p>I_tc_prim ({study.tc_relacao.split('/')[0]}A) &gt; In_Planta ({InomPlanta.toFixed(1)}A)</p>
+                <p className={parseFloat(study.tc_relacao.split('/')[0]) >= InomPlanta ? 'text-green-600 font-bold' : 'text-red-600 font-bold'}>
+                   {parseFloat(study.tc_relacao.split('/')[0]) >= InomPlanta ? 'Status: Conforme' : 'Status: Subdimensionado'}
+                </p>
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      {/* Parecer Técnico */}
+      <section className="mb-6 pt-4 border-t-2 border-black">
+        <h3 className="report-section-title">6. Parecer Técnico Final</h3>
+        <div className="bg-zinc-50 p-4 border border-zinc-200 text-[10px] space-y-2 uppercase font-mono italic">
+           {getTechnicalSuggestions(study).length === 0 ? (
+             <p className="text-green-800">O sistema de proteção dimensionado atende integralmente às exigências normativas da ABNT NBR 14039. As curvas de proteção garantem a integridade dos equipamentos e a seletividade com a concessionária.</p>
+           ) : (
+             getTechnicalSuggestions(study).map((s, i) => (
+                <p key={i} className="text-red-800">• {s}</p>
+             ))
+           )}
+        </div>
+      </section>
+
+      {/* Assinaturas */}
+      <div className="mt-12 flex justify-between px-12">
+        <div className="text-center">
+          <div className="w-[180px] border-t border-black mb-1"></div>
+          <p className="text-[9px] font-black uppercase">{study.rt_nome}</p>
+          <p className="text-[7px] text-zinc-400">Responsável Técnico / CREA</p>
+        </div>
+        <div className="text-center">
+          <div className="w-[180px] border-t border-black mb-1"></div>
+          <p className="text-[9px] font-black uppercase">Responsável Legal</p>
+          <p className="text-[7px] text-zinc-400 font-mono">{study.cnpj_proprietario}</p>
+        </div>
       </div>
     </div>
   );
 };
 
-const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) => {
-  // Cálculos Técnicos para Memória
+const CemigReport = ({ study, curves, specialPoints }: any) => {
   const In = study.trafo_kva / (Math.sqrt(3) * study.trafo_v_prim / 1000);
-  const Z_base = Math.pow(study.trafo_v_prim, 2) / (study.trafo_kva * 1000);
-  const Z_calc = (study.trafo_z / 100) * Z_base;
-  const I_inrush = In * 8;
-  
-  // Cálculo de ANSI
-  const I_ansi = (100 / study.trafo_z) * In;
-  const I_ansi_therm = I_ansi * 0.58;
-
-  // Avaliação do TC
+  const InomPlant = (study.demanda_nova) / (study.trafo_v_prim * Math.sqrt(3) * study.fator_potencia / 1000);
   const tcRatioStr = study.tc_relacao || '50/5';
-  const tcPrimary = parseFloat(tcRatioStr.split('/')[0]) || 50;
-  const tcSaturationLevel = study.icc_3f / tcPrimary;
-  const tcStatus = tcSaturationLevel <= 20;
+  const tcSaturationLevel = study.icc_3f / (parseFloat(tcRatioStr.split('/')[0]) || 1);
 
   return (
-    <>
-      {/* Cabeçalho Profissional */}
-      <div className="border-b-4 border-black pb-4 mb-8 flex justify-between items-end text-black">
-        <div className="w-full">
-          <h1 className="text-2xl font-black uppercase leading-tight mb-1">Memorial de Cálculo e Estudo de Coordenação</h1>
-          <p className="text-[10px] font-sans text-[#71717a] uppercase tracking-widest">Proteção Primária - Sistema de Média Tensão</p>
-        </div>
-      </div>
-
-      {/* Gráfico Técnico */}
-      <div className="mb-10 p-4 border-2 border-[#f4f4f5] rounded-lg">
-         <h4 className="text-[10px] font-black uppercase text-[#71717a] mb-2 border-b border-[#f4f4f5] pb-1">Coordenograma de Proteção (Log-Log)</h4>
-         <div className="h-[380px] pointer-events-none">
-            <CoordChart 
-              curves={curves} 
-              icc_3f={study.icc_3f} 
-              icc_1f={study.icc_1f} 
-              specialPoints={specialPoints} 
-            />
+    <div className="text-black font-sans leading-tight p-[15mm]">
+      <div className="flex justify-between items-start border-b-2 border-black pb-4 mb-4">
+         <div className="text-right w-full">
+           <h1 className="text-lg font-extrabold uppercase">Memorial de Proteção - Cemig MG</h1>
+           <p className="text-[8px] text-zinc-500 uppercase tracking-widest">Atendimento à Norma Técnica ND 5.3</p>
          </div>
-         <p className="text-[8px] text-[#a1a1aa] mt-2 font-sans italic">* O gráfico acima apresenta a coordenação entre as curvas de fase (51/50) e neutro (51N/50N) com os pontos ANSI e magnetização dos transformadores.</p>
       </div>
 
-      {/* Identificação */}
-      <section className="mb-8">
-        <h2 className="text-xs font-black bg-black text-white px-3 py-1.5 mb-4 uppercase inline-block">1. Identificação do Projeto</h2>
-        <div className="grid grid-cols-2 gap-x-12 gap-y-2 text-[10px] border-l-2 border-[#f4f4f5] pl-4">
-          <p><strong>Cód. Projeto:</strong> {study.projeto}</p>
-          <p><strong>Responsável:</strong> {study.rt_nome}</p>
-          <p><strong>Proprietário:</strong> {study.proprietario}</p>
-          <p><strong>CNPJ:</strong> {study.cnpj_proprietario}</p>
-          <p><strong>Endereço:</strong> {study.endereco}</p>
-          <p><strong>Concessionária:</strong> {concessionaria?.nome}</p>
-        </div>
+      <section className="report-section">
+        <h3 className="report-section-title">1. Dados da Unidade Consumidora</h3>
+        <table className="w-full text-[10px] border-collapse bg-zinc-50/50">
+          <tbody>
+            <tr>
+              <td className="p-3 border border-zinc-200 w-1/2 align-top">
+                <div className="space-y-1.5">
+                  <p><strong className="text-zinc-500 uppercase text-[7px]">Projeto:</strong> {study.projeto}</p>
+                  <p><strong className="text-zinc-500 uppercase text-[7px]">Proprietário:</strong> {study.proprietario}</p>
+                  <p><strong className="text-zinc-500 uppercase text-[7px]">Logradouro:</strong> {study.endereco}</p>
+                </div>
+              </td>
+              <td className="p-3 border border-zinc-200 w-1/2 align-top">
+                <div className="space-y-1.5">
+                  <p><strong className="text-zinc-500 uppercase text-[7px]">CNPJ/CPF:</strong> {study.cnpj_proprietario}</p>
+                  <p><strong className="text-zinc-500 uppercase text-[7px]">Responsável Técnico:</strong> {study.rt_nome}</p>
+                  <p><strong className="text-zinc-500 uppercase text-[7px]">Demanda:</strong> {study.demanda_nova} kW</p>
+                </div>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </section>
 
-      {/* Memória de Cálculo do Trafo */}
-      <section className="mb-8">
-        <h2 className="text-xs font-black bg-black text-white px-3 py-1.5 mb-4 uppercase inline-block">2. Dimensionamento e Dados Técnicos</h2>
-        <div className="space-y-4">
-          <div className="p-4 border border-[#e4e4e7] bg-[#fafafa] rounded flex flex-col gap-3">
-             <div className="flex justify-between border-b border-[#e4e4e7] pb-2 mb-2">
-                <span className="text-[11px] font-bold uppercase">2.1 - Caracterização do Transformador</span>
-                <span className="text-[9px] font-mono bg-white px-2 rounded border border-[#e4e4e7]">{study.trafo_isolamento}</span>
-             </div>
-             <div className="grid grid-cols-3 gap-6 text-[10px]">
-                <div>
-                  <p className="text-[#71717a] mb-1">Potência Nominal:</p>
-                  <p className="font-bold">{study.trafo_kva} kVA</p>
-                </div>
-                <div>
-                  <p className="text-[#71717a] mb-1">Impedância (%):</p>
-                  <p className="font-bold">{study.trafo_z}%</p>
-                </div>
-                <div>
-                  <p className="text-[#71717a] mb-1">Tensão Nominal:</p>
-                  <p className="font-bold">{study.trafo_v_prim} V / {study.trafo_v_sec} V</p>
-                </div>
-             </div>
-          </div>
-
-          <div className="p-4 border border-[#e4e4e7] bg-[#fafafa] rounded">
-             <p className="text-[11px] font-bold uppercase border-b border-[#e4e4e7] pb-2 mb-3">2.2 - Memória de Cálculo de Correntes e Curto-Circuito</p>
-             <div className="grid grid-cols-2 gap-y-4 text-[10px] font-mono">
-                <div className="flex flex-col gap-1 border-r border-[#e4e4e7] pr-4">
-                  <span className="font-sans text-[#71717a] text-[9px] uppercase font-bold">Corrente Nominal (In):</span>
-                  <p className="text-xs font-bold">In = {In.toFixed(2)} A</p>
-                  <p className="text-[8px] italic text-[#a1a1aa]">Sn / (Vp * √3)</p>
-                </div>
-                <div className="flex flex-col gap-1 pl-4">
-                  <span className="font-sans text-[#71717a] text-[9px] uppercase font-bold">Inrush (Magnetização):</span>
-                  <p className="text-xs font-bold text-[#1d4ed8]">I_inr = {I_inrush.toFixed(2)} A</p>
-                  <p className="text-[8px] italic text-[#a1a1aa]">Ref: 8xIn @ 100ms</p>
-                </div>
-                <div className="flex flex-col gap-1 border-r border-[#e4e4e7] pr-4 mt-2">
-                  <span className="font-sans text-[#71717a] text-[9px] uppercase font-bold">Corrente ANSI (Curva I²t):</span>
-                  <p className="text-xs font-bold">Mech: {I_ansi.toFixed(1)} A @ 0.1s</p>
-                  <p className="text-xs font-bold">Therm: {I_ansi_therm.toFixed(1)} A @ 3.0s</p>
-                </div>
-                <div className="flex flex-col gap-1 pl-4 mt-2">
-                   <span className="font-sans text-[#71717a] text-[9px] uppercase font-bold">Nível de Curto-Circuito:</span>
-                   <p className="text-xs font-bold text-[#dc2626]">Icc 3φ = {study.icc_3f} A</p>
-                   {study.icc_1f && <p className="text-xs font-bold text-[#2563eb]">Icc 1φ = {study.icc_1f} A</p>}
-                </div>
-             </div>
-          </div>
-        </div>
+      {/* Seção 2: Memória de Cálculo e Dimensionamento */}
+      <section className="report-section">
+        <h3 className="report-section-title">2. Memória de Cálculo e Dimensionamento</h3>
+        <table className="calc-table">
+          <tbody>
+            <tr>
+              <td className="calc-box w-1/2">
+                 <p className="calc-formula text-[8px] uppercase">In_Trafo (Corrente Nominal Trafos)</p>
+                 <p className="text-[10px]">I = {study.trafo_kva}kVA / ({(study.trafo_v_prim/1000).toFixed(2)}kV * 1.732) = {In.toFixed(2)}A</p>
+              </td>
+              <td className="calc-box w-1/2">
+                 <p className="calc-formula text-[8px] uppercase">In_Carga (Corrente Nominal Planta)</p>
+                 <p className="text-[10px]">I = {study.demanda_nova}kW / ({(study.trafo_v_prim/1000).toFixed(2)}kV * 1.732 * {study.fator_potencia}) = {InomPlant.toFixed(2)}A</p>
+              </td>
+            </tr>
+            <tr className="h-4"><td></td></tr>
+            <tr>
+              <td colSpan={2} className="calc-box">
+                 <p className="calc-formula text-[8px] uppercase">Relação de TC (Transformador de Corrente)</p>
+                 <p className="text-[10px]">RTC Escolhida: {study.tc_relacao} (Classe {study.tc_classe})</p>
+                 <p className="text-[10px]">Fator de Saturação (F): {study.icc_3f}A / {(study.tc_relacao.split('/')[0])}A = {tcSaturationLevel.toFixed(2)}x</p>
+                 <p className={tcSaturationLevel <= 20 ? 'text-green-700 font-bold text-[10px]' : 'text-red-700 font-bold text-[10px]'}>
+                    {tcSaturationLevel <= 20 ? 'STATUS: CONFORME (F < 20)' : 'STATUS: NÃO CONFORME - RISCO DE SATURAÇÃO'}
+                 </p>
+              </td>
+            </tr>
+          </tbody>
+        </table>
       </section>
 
-      {/* Avaliação do TC */}
-      <section className="mb-8">
-        <h2 className="text-xs font-black bg-black text-white px-3 py-1.5 mb-4 uppercase inline-block">3. Avaliação dos Transformadores de Corrente (TCs)</h2>
-        <div className="p-4 border border-[#e4e4e7] bg-[#fafafa] rounded">
-          <table className="w-full text-left text-[10px]">
-            <thead>
-              <tr className="border-b border-[#d4d4d8]">
-                <th className="pb-2 uppercase">TC Instalado</th>
-                <th className="pb-2 uppercase">Relação</th>
-                <th className="pb-2 uppercase">Fator Saturação (Icc/Ip)</th>
-                <th className="pb-2 uppercase">Status de Adequação</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-b border-[#f4f4f5]">
-                <td className="pt-3 pb-3">Unidade de Proteção Primária</td>
-                <td className="pt-3 pb-3 font-bold">{study.tc_relacao} ({study.tc_classe})</td>
-                <td className="pt-3 pb-3 font-mono">{tcSaturationLevel.toFixed(2)}x</td>
-                <td className="pt-3 pb-3">
-                   {tcStatus ? (
-                     <span className="text-[#15803d] font-bold flex items-center gap-1">ADEQUADO (OK)</span>
-                   ) : (
-                     <span className="text-[#dc2626] font-bold flex items-center gap-1 underline underline-offset-4">NECESSÁRIA SUBSTITUIÇÃO (Icc {' > '} 20xIp)</span>
-                   )}
+      {/* Relação de Equipamentos */}
+      <section className="report-section">
+        <h3 className="report-section-title">2.1. Relação de Equipamentos Instalados</h3>
+        <table className="report-table">
+          <thead>
+            <tr>
+              <th>EQUIPAMENTO</th>
+              <th>POTÊNCIA</th>
+              <th>QTD</th>
+              <th>DETALHES</th>
+            </tr>
+          </thead>
+          <tbody>
+            {study.equipamentos.length > 0 ? study.equipamentos.map((eq: any, idx: number) => (
+              <tr key={idx}>
+                <td className="font-bold">{eq.tipo}</td>
+                <td>{eq.kva} {eq.tipo === 'Motor' ? 'kW' : 'kVA'}</td>
+                <td>{eq.qtd}</td>
+                <td className="text-[8px]">
+                  {eq.tipo === 'Transformador' && `Z: ${eq.z}% | ${eq.v_prim/1000}/${eq.v_sec}kV`}
+                  {eq.tipo === 'Motor' && `Inrush Estimado: ${(eq.kva / (study.trafo_v_prim * Math.sqrt(3) * 0.85 * 0.9 / 1000) * 6).toFixed(1)}A`}
+                  {!['Transformador', 'Motor'].includes(eq.tipo) && 'Carga geral de baixa tensão'}
                 </td>
               </tr>
-            </tbody>
-          </table>
-          <p className="text-[8px] mt-4 text-[#71717a] italic">* Nota: A substituição do TC é informada com base no limite padrão de 20 vezes a corrente nominal primária para evitar saturação durante faltas de máxima intensidade conforme requisitos normativos.</p>
-        </div>
-      </section>
-
-      {/* Resumo da Parametrização */}
-      <section className="mb-8">
-        <h2 className="text-xs font-black bg-black text-white px-3 py-1.5 mb-4 uppercase inline-block">4. Resumo da Parametrização do Relé</h2>
-        <div className="border-2 border-black overflow-hidden rounded">
-          <table className="w-full text-center text-[10px] border-collapse">
-            <thead>
-              <tr className="bg-[#f4f4f5] border-b-2 border-black">
-                <th className="p-2 border-r border-black uppercase text-[9px]">Função</th>
-                <th className="p-2 border-r border-black uppercase text-[9px]">IP (Pickup)</th>
-                <th className="p-2 border-r border-black uppercase text-[9px]">DT (TMS)</th>
-                <th className="p-2 border-r border-black uppercase text-[9px]">Curva</th>
-                <th className="p-2 border-r border-black uppercase text-[9px]">I DEF</th>
-                <th className="p-2 border-r border-black uppercase text-[9px]">T DEF</th>
-                <th className="p-2 border-r border-black uppercase text-[9px]">I INST</th>
-                <th className="p-2 uppercase text-[9px]">TC</th>
-              </tr>
-            </thead>
-            <tbody>
-              <tr className="border-b border-[#e4e4e7]">
-                <td className="p-2 border-r border-[#e4e4e7] font-bold bg-[#fafafa] font-sans">FASE (51/50)</td>
-                <td className="p-2 border-r border-[#e4e4e7] font-mono">{study.rele_fase.pickup}A</td>
-                <td className="p-2 border-r border-[#e4e4e7] font-mono">{study.rele_fase.tms}</td>
-                <td className="p-2 border-r border-[#e4e4e7] text-[9px] uppercase">{study.rele_fase.curva}</td>
-                <td className="p-2 border-r border-[#e4e4e7] font-mono">{study.rele_fase.i_def || 'OFF'}</td>
-                <td className="p-2 border-r border-[#e4e4e7] font-mono">{study.rele_fase.t_def || '--'}s</td>
-                <td className="p-2 border-r border-[#e4e4e7] font-mono">{study.rele_fase.i_inst || 'OFF'}</td>
-                <td className="p-2 font-bold">{study.tc_relacao}</td>
-              </tr>
+            )) : (
               <tr>
-                <td className="p-2 border-r border-[#e4e4e7] font-bold bg-[#fafafa] font-sans">NEUTRO (51N/50N)</td>
-                <td className="p-2 border-r border-[#e4e4e7] font-mono">{study.rele_neutro.pickup}A</td>
-                <td className="p-2 border-r border-[#e4e4e7] font-mono">{study.rele_neutro.tms}</td>
-                <td className="p-2 border-r border-[#e4e4e7] text-[9px] uppercase">{study.rele_neutro.curva}</td>
-                <td className="p-2 border-r border-[#e4e4e7] font-mono">{study.rele_neutro.i_def || 'OFF'}</td>
-                <td className="p-2 border-r border-[#e4e4e7] font-mono">{study.rele_neutro.t_def || '--'}s</td>
-                <td className="p-2 border-r border-[#e4e4e7] font-mono">{study.rele_neutro.i_inst || 'OFF'}</td>
-                <td className="p-2 font-bold">{study.tc_relacao}</td>
+                <td colSpan={4} className="text-center py-2 text-zinc-400 italic font-mono text-[9px]">
+                  Nenhum equipamento adicional declarado além do transformador principal.
+                </td>
               </tr>
-            </tbody>
-          </table>
+            )}
+          </tbody>
+        </table>
+      </section>
+
+      {/* Seção 3: Coordenograma */}
+      <section className="report-section page-break-before-always">
+        <h3 className="report-section-title">3. Coordenograma de Seletividade</h3>
+        <div className="border-2 border-black h-[450px] w-full bg-white flex items-center justify-center p-4">
+           <div className="w-full h-full">
+              <CoordChart curves={curves} icc_3f={study.icc_3f} icc_1f={study.icc_1f} specialPoints={specialPoints} />
+           </div>
+        </div>
+        <p className="text-[7px] text-zinc-400 mt-2 uppercase text-center font-mono italic">Curvas de proteção conforme parâmetros técnicos da ND 5.3.</p>
+      </section>
+
+      <section className="mb-4">
+        <h3 className="report-section-title">4. Ajustes do Relé de Proteção (ANSI 50/51)</h3>
+        <table className="report-table">
+          <thead>
+            <tr>
+              <th>PARÂMETRO</th>
+              <th>FASE (51/50)</th>
+              <th>NEUTRO (51/50N)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td className="font-bold uppercase text-[7px]">Pickup (A)</td>
+              <td className="font-mono">{study.rele_fase.pickup}</td>
+              <td className="font-mono">{study.rele_neutro.pickup}</td>
+            </tr>
+            <tr>
+              <td className="font-bold uppercase text-[7px]">TMS / Dial</td>
+              <td className="font-mono">{study.rele_fase.tms}</td>
+              <td className="font-mono">{study.rele_neutro.tms}</td>
+            </tr>
+            <tr>
+              <td className="font-bold uppercase text-[7px]">Curva</td>
+              <td className="uppercase">{study.rele_fase.curva}</td>
+              <td className="uppercase">{study.rele_neutro.curva}</td>
+            </tr>
+            <tr>
+               <td className="font-bold uppercase text-[7px]">Instantâneo (A)</td>
+               <td className="font-mono">{study.rele_fase.i_inst || '---'}</td>
+               <td className="font-mono">{study.rele_neutro.i_inst || '---'}</td>
+            </tr>
+          </tbody>
+        </table>
+      </section>
+
+      <section className="mb-4">
+        <h3 className="report-section-title">5. Análise de Seletividade e Parecer</h3>
+        <div className="p-3 border border-zinc-200 rounded text-[8px] space-y-1 bg-zinc-50 font-mono">
+           {getTechnicalSuggestions(study).length === 0 ? (
+             <p className="text-green-700 font-bold uppercase italic">Ajustes verificados em conformidade com as exigências da norma técnica ND 5.3 e ABNT NBR 14039.</p>
+           ) : (
+             getTechnicalSuggestions(study).map((sug, idx) => (
+                <p key={idx} className="uppercase leading-tight">• {sug}</p>
+             ))
+           )}
         </div>
       </section>
 
-      {/* Funções Adicionais */}
-      {Object.values(study.funcoes_adicionais || {}).some((f: any) => f.habilitada) && (
-        <section className="mb-8">
-          <h2 className="text-xs font-black bg-black text-white px-3 py-1.5 mb-4 uppercase inline-block">5. Outras Funções de Proteção</h2>
-          <div className="p-4 border border-[#e4e4e7] bg-[#fafafa] rounded">
-            <div className="grid grid-cols-2 gap-x-12 gap-y-2 text-[10px]">
-              {Object.entries(study.funcoes_adicionais || {}).map(([ansi, data]: [string, any]) => (
-                data.habilitada && (
-                  <div key={ansi} className="flex flex-col gap-1">
-                    {ansi === '81' ? (
-                      <div className="col-span-1">
-                        <p className="font-bold">ANSI 81 - Frequência:</p>
-                        <div className="pl-2 space-y-0.5 text-[9px] text-[#71717a]">
-                           <p>• Sub-Freq: {data.f_low}Hz / {data.t_low}s</p>
-                           <p>• Sob-Freq: {data.f_high}Hz / {data.t_high}s</p>
-                        </div>
-                      </div>
-                    ) : (
-                      <p><strong>ANSI {ansi}:</strong> {data.ajuste || 'Habilitado'}</p>
-                    )}
-                  </div>
-                )
-              ))}
-            </div>
-          </div>
-        </section>
-      )}
-
-      {/* Geração e Sincronismo */}
-      {(study.geracao_propria?.habilitada || study.sincronismo?.habilitada) && (
-        <section className="mb-8">
-          <h2 className="text-xs font-black bg-black text-white px-3 py-1.5 mb-4 uppercase inline-block">6. Geração Própria e Sincronismo</h2>
-          <div className="p-4 border border-[#e4e4e7] bg-[#fafafa] rounded space-y-4">
-            {study.geracao_propria?.habilitada && (
-              <div className="text-[10px]">
-                <p className="font-bold border-b border-[#e4e4e7] pb-1 mb-1 uppercase tracking-tight">6.1 - Descrição da Geração Própria</p>
-                <p className="whitespace-pre-wrap italic">{study.geracao_propria?.descricao || 'Nenhuma descrição informada.'}</p>
-              </div>
-            )}
-            {study.sincronismo?.habilitada && (
-              <div className="text-[10px]">
-                <p className="font-bold border-b border-[#e4e4e7] pb-1 mb-1 uppercase tracking-tight">6.2 - Sincronismo (ANSI 25)</p>
-                <p><strong>Ajuste de Sincronismo:</strong> {study.sincronismo?.ajuste || 'Habilitado'}</p>
-              </div>
-            )}
-          </div>
-        </section>
-      )}
-
-      {/* Conclusão */}
-      <div className="mt-12">
-        <div className="p-6 border-2 border-black bg-[#fafafa] text-center">
-            <h5 className="font-black text-xs uppercase mb-2">Parecer Técnico de Conformidade</h5>
-            <p className="text-[10px] leading-relaxed max-w-lg mx-auto italic">
-              Concluímos que a parametrização proposta atende aos requisitos de seletividade e sensibilidade. A proteção primária garante o desligamento seguro em caso de faltas internas, protegendo os equipamentos contra danos térmicos e mecânicos (Curva ANSI), enquanto mantém a coordenação com o elo fusível {study.fusivel_concessionaria || '---'} da concessionária {concessionaria?.nome}.
-            </p>
-        </div>
-
-        <div className="mt-16 grid grid-cols-2 gap-32 text-center text-[10px] uppercase font-bold">
-            <div className="pt-2 border-t-2 border-black">
-              <span className="block mb-1">{study.rt_nome || 'RESPONSÁVEL TÉCNICO'}</span>
-              <span className="text-[9px] text-[#71717a]">CREA: {study.rt_crea} / ART: {study.art_numero}</span>
-            </div>
-            <div className="pt-2 border-t-2 border-black">
-              <span className="block mb-1">PROPRIETÁRIO / CNPJ</span>
-              <span className="text-[9px] text-[#71717a]">{study.cnpj_proprietario}</span>
-            </div>
-        </div>
-      </div>
-    </>
-  );
-};
-
-const CemigReport = ({ study, concessionaria, curves, specialPoints }: any) => {
-  const InomPlant = (study.demanda_nova) / (study.trafo_v_prim * Math.sqrt(3) * study.fator_potencia / 1000);
-  const IpickupFase = study.rele_fase.pickup;
-  const IpickupNeutro = study.rele_neutro.pickup;
-  const Icc = study.icc_3f;
-
-  return (
-    <div className="text-black font-sans">
-      <div className="flex justify-between items-start border-b-2 border-black pb-4 mb-6">
-         <div className="text-right w-full">
-           <h1 className="text-xl font-extrabold uppercase">Memorial de Proteção Cemig</h1>
-           <p className="text-xs text-[#71717a]">Documento em conformidade com {study.normas_selecionadas?.join(', ') || 'normas vigentes'}</p>
-         </div>
-      </div>
-
-      <div className="grid grid-cols-1 gap-6 mb-8">
-        <section className="mb-4">
-           <div className="border border-[#e4e4e7]">
-              <p className="bg-[#27272a] text-white text-[10px] font-bold p-1 uppercase">Coordenograma de Proteção</p>
-              <div className="p-2 bg-white">
-                 <div className="h-[350px] pointer-events-none">
-                    <CoordChart 
-                      curves={curves} 
-                      icc_3f={study.icc_3f} 
-                      icc_1f={study.icc_1f} 
-                      specialPoints={specialPoints} 
-                    />
-                 </div>
-              </div>
+      <section className="mt-8">
+        <div className="grid grid-cols-2 gap-12 text-[9px] text-center pt-8">
+           <div className="border-t border-zinc-400 pt-2">
+             <p className="font-bold uppercase">{study.rt_nome}</p>
+             <p className="text-zinc-400 uppercase text-[7px]">Engenheiro Responsável / CREA</p>
            </div>
-        </section>
-
-        <section>
-          <h3 className="bg-[#27272a] text-white px-3 py-1 text-xs font-bold uppercase mb-3">1.0 - DADOS DA UNIDADE CONSUMIDORA</h3>
-          <div className="grid grid-cols-2 gap-4 text-[11px] border border-[#e4e4e7] p-4">
-             <p><strong>PROPRIETÁRIO:</strong> {study.proprietario}</p>
-             <p><strong>CNPJ:</strong> {study.cnpj_proprietario}</p>
-             <p><strong>LOGRADOURO:</strong> {study.endereco}</p>
-             <p><strong>COD. INSTALAÇÃO:</strong> {study.codigo_instalacao}</p>
-             <p><strong>DEMANDA PROJETADA:</strong> {study.demanda_nova} kW</p>
-             <p><strong>FATOR DE POTÊNCIA:</strong> {study.fator_potencia}</p>
-          </div>
-        </section>
-
-        <section>
-          <h3 className="bg-[#27272a] text-white px-3 py-1 text-xs font-bold uppercase mb-3">3.0 - MEMÓRIA DE CÁLCULO</h3>
-          <div className="space-y-4 text-[11px]">
-             <div className="p-3 bg-[#fafafa] border border-[#f4f4f5] font-mono">
-               <p className="font-bold border-b border-[#e4e4e7] mb-2">3.1 - Corrente Nominal do Cliente (In)</p>
-               <p>In = Demanda / (V_prim * √3 * FP)</p>
-               <p>In = {study.demanda_nova} / ({(study.trafo_v_prim/1000).toFixed(1)} * 1.73 * {study.fator_potencia})</p>
-               <p className="text-[#15803d] font-bold">In = {InomPlant.toFixed(2)} A</p>
-             </div>
-
-             <div className="p-3 bg-[#fafafa] border border-[#f4f4f5] font-mono">
-               <p className="font-bold border-b border-[#e4e4e7] mb-2">3.2 - Corrente de Partida (Pickup)</p>
-               <p>Ip Fase: {study.rele_fase.pickup} A (Seleção do Projetista)</p>
-               <p>Ip Neutro: {study.rele_neutro.pickup} A (Seleção do Projetista)</p>
-             </div>
-
-             <div className="p-3 bg-[#fafafa] border border-[#f4f4f5] font-mono">
-                <p className="font-bold border-b border-[#e4e4e7] mb-2">3.3 - Resumo dos Ajustes do Relé</p>
-                <table className="w-full text-center border-collapse">
-                  <thead>
-                    <tr className="bg-[#e4e4e7] border border-[#d4d4d8]">
-                      <th className="p-1 border border-[#d4d4d8]">Parâmetro</th>
-                      <th className="p-1 border border-[#d4d4d8]">Fase (51)</th>
-                      <th className="p-1 border border-[#d4d4d8]">Neutro (51N)</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    <tr className="border border-[#d4d4d8]">
-                      <td className="p-1 border border-[#d4d4d8] uppercase">Pickup (A)</td>
-                      <td className="p-1 border border-[#d4d4d8]">{study.rele_fase.pickup}</td>
-                      <td className="p-1 border border-[#d4d4d8]">{study.rele_neutro.pickup}</td>
-                    </tr>
-                    <tr className="border border-[#d4d4d8]">
-                      <td className="p-1 border border-[#d4d4d8] uppercase">TMS/Dial</td>
-                      <td className="p-1 border border-[#d4d4d8]">{study.rele_fase.tms}</td>
-                      <td className="p-1 border border-[#d4d4d8]">{study.rele_neutro.tms}</td>
-                    </tr>
-                    <tr className="border border-[#d4d4d8]">
-                      <td className="p-1 border border-[#d4d4d8] uppercase">Curva</td>
-                      <td className="p-1 border border-[#d4d4d8]">{study.rele_fase.curva}</td>
-                      <td className="p-1 border border-[#d4d4d8]">{study.rele_neutro.curva}</td>
-                    </tr>
-                  </tbody>
-                </table>
-             </div>
-          </div>
-        </section>
-
-        <section>
-          <h3 className="bg-[#27272a] text-white px-3 py-1 text-xs font-bold uppercase mb-3">4.0 - RESPONSÁVEL TÉCNICO</h3>
-          <div className="grid grid-cols-2 gap-4 text-[10px] items-end">
-             <div>
-               <p><strong>NOME:</strong> {study.rt_nome}</p>
-               <p><strong>CREA:</strong> {study.rt_crea}</p>
-               <p><strong>ART:</strong> {study.art_numero}</p>
-             </div>
-             <div className="text-center">
-                <div className="h-px bg-black mb-2 px-10"></div>
-                <p className="font-bold uppercase italic">Assinatura Eletrônica</p>
-             </div>
-          </div>
-        </section>
-      </div>
-
-      <div className="text-[8px] text-[#a1a1aa] mt-20 flex justify-between uppercase">
-         <span>Folha 1 / 1</span>
-         <span>Gerado por: {study.rt_nome || 'Sistema Coordenograma'}</span>
-      </div>
+           <div className="border-t border-zinc-400 pt-2">
+             <p className="font-bold uppercase">Cliente / Representante</p>
+             <p className="text-zinc-400 uppercase text-[7px]">Aceite Técnico</p>
+           </div>
+        </div>
+      </section>
     </div>
   );
 };
