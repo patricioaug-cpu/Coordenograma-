@@ -111,6 +111,12 @@ Versão do Sistema: 1.1.0 PRO
             -webkit-print-color-adjust: exact;
             print-color-adjust: exact;
             color: black !important;
+            width: 210mm !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            position: absolute !important;
+            left: 0 !important;
+            top: 0 !important;
           }
           /* Esconde a aplicação principal e outros elementos */
           #root, .no-print {
@@ -120,20 +126,36 @@ Versão do Sistema: 1.1.0 PRO
           .report-portal-wrapper {
             display: block !important;
             position: absolute !important;
-            top: 0;
-            left: 0;
-            width: 100% !important;
+            top: 0 !important;
+            left: 0 !important;
+            width: 210mm !important;
+            height: auto !important;
             background: white !important;
+            overflow: visible !important;
+            padding: 0 !important;
+            margin: 0 !important;
+          }
+          /* Override inline styles for preview scaling during print */
+          .report-portal-wrapper div {
+            transform: none !important;
+            margin: 0 !important;
+            padding: 0 !important;
+            width: 210mm !important;
+            box-shadow: none !important;
+            display: block !important;
+            height: auto !important;
+            position: static !important;
           }
           #printable-report {
             display: block !important;
             visibility: visible !important;
             width: 210mm !important;
             min-height: 297mm !important;
-            padding: 18mm !important;
+            padding: 15mm !important;
             margin: 0 !important;
             box-shadow: none !important;
             background: white !important;
+            position: relative !important;
           }
           .report-section {
             page-break-inside: avoid;
