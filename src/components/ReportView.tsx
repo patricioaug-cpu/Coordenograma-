@@ -244,19 +244,50 @@ Versão do Sistema: 1.1.0 PRO
               height: auto !important;
               aspect-ratio: 4 / 3 !important;
               padding: 0 !important;
-              margin: 0 !important;
+              margin: 20px 0 !important;
               box-shadow: none !important;
               border-radius: 0 !important;
               display: block !important;
               visibility: visible !important;
+              print-color-adjust: exact !important;
+              -webkit-print-color-adjust: exact !important;
             }
             .coord-chart-container svg {
               display: block !important;
               visibility: visible !important;
               width: 100% !important;
               height: 100% !important;
-              min-height: 200px !important;
+              min-height: 500px !important;
               background-color: white !important;
+            }
+            /* Garantir que as linhas e textos internos apareçam */
+            .coord-chart-container svg g.x-axis line,
+            .coord-chart-container svg g.y-axis line {
+              stroke: #ccc !important;
+              stroke-opacity: 1 !important;
+            }
+            .coord-chart-container svg g.x-axis text,
+            .coord-chart-container svg g.y-axis text {
+              fill: #000 !important;
+              stroke: none !important;
+              font-weight: bold !important;
+            }
+            .coord-chart-container .label-axis {
+              fill: #000 !important;
+              font-weight: bold !important;
+            }
+            .coord-chart-container .label-bg {
+              fill: white !important;
+              stroke: black !important;
+              stroke-width: 1px !important;
+            }
+            .coord-chart-container text {
+              fill: black !important;
+            }
+            /* Manter as cores das curvas no print */
+            .curve-path {
+              print-color-adjust: exact !important;
+              -webkit-print-color-adjust: exact !important;
             }
           .coord-chart-container .label-axis {
             fill: #000 !important;
