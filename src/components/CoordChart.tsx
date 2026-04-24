@@ -108,7 +108,7 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
   useEffect(() => {
     if (!svgRef.current) return;
 
-    const margin = { top: 40, right: 40, bottom: 60, left: 70 };
+    const margin = { top: 50, right: 50, bottom: 80, left: 90 };
     const width = 800 - margin.left - margin.right;
     const height = 600 - margin.top - margin.bottom;
 
@@ -154,12 +154,14 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
         if (v >= 1000) return `${v / 1000}k`;
         return `${v}`;
       })
-      .tickSize(-height);
+      .tickSize(-height)
+      .tickPadding(10);
 
     const yAxis = d3.axisLeft(yScaleBase)
       .tickValues(yTicks)
       .tickFormat((d) => d.valueOf().toString())
-      .tickSize(-width);
+      .tickSize(-width)
+      .tickPadding(10);
 
     // Tooltip elements (mantidos fora do zoom individual para serem atualizados dinamicamente)
     const tooltipGroup = mainGroup.append("g")
@@ -209,23 +211,25 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
     // Labels de Eixo
     mainGroup.append("text")
       .attr("x", width / 2)
-      .attr("y", height + 40)
-      .attr("fill", "rgba(34, 197, 94, 0.6)")
-      .attr("font-size", "10px")
+      .attr("y", height + 60)
+      .attr("fill", "rgba(34, 197, 94, 0.8)")
+      .attr("font-size", "14px")
       .attr("font-family", "monospace")
       .attr("text-anchor", "middle")
       .attr("font-weight", "bold")
+      .attr("class", "label-axis")
       .text("CORRENTE (A)");
 
     mainGroup.append("text")
       .attr("transform", "rotate(-90)")
       .attr("x", -height / 2)
-      .attr("y", -45)
-      .attr("fill", "rgba(34, 197, 94, 0.6)")
-      .attr("font-size", "10px")
+      .attr("y", -65)
+      .attr("fill", "rgba(34, 197, 94, 0.8)")
+      .attr("font-size", "14px")
       .attr("font-family", "monospace")
       .attr("text-anchor", "middle")
       .attr("font-weight", "bold")
+      .attr("class", "label-axis")
       .text("TEMPO (s)");
 
     // Função Principal de Renderização / Update
@@ -246,52 +250,59 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
 
       // Update Pickups Labels
       labelsGroup.selectAll("*").remove();
-      const pickupPositions: number[] = [];
+      const pickupPositions: {x: number, y: number}[] = [];
       curves.forEach((curve, idx) => {
         if (curve.points.length > 0) {
           const pickup = curve.points[0].I / 1.1;
           const px = newXScale(pickup);
           if (px >= 0 && px <= width) {
-            let py = height + 15;
+            let py = height + 20;
             // Evitar sobreposição de etiquetas de pickup na base
-            pickupPositions.forEach(pos => {
-              if (Math.abs(pos - px) < 40) py += 12;
-            });
-            pickupPositions.push(px);
+            let overlapping = true;
+            while (overlapping) {
+              overlapping = pickupPositions.some(pos => 
+                Math.abs(pos.x - px) < 50 && Math.abs(pos.y - py) < 15
+              );
+              if (overlapping) py += 16;
+              else break;
+              if (py > height + 80) break; // Hard limit
+            }
+            pickupPositions.push({x: px, y: py});
 
-            const labelText = pickup.toFixed(1); // Slightly more precision if needed, or stick to 0
-            const labelW = labelText.length * 7 + 6;
+            const labelText = pickup.toFixed(1);
+            const labelW = labelText.length * 8 + 14; // More padding
 
             labelsGroup.append("rect")
               .attr("x", px - labelW/2)
-              .attr("y", py - 10)
+              .attr("y", py - 12)
               .attr("width", labelW)
-              .attr("height", 14)
+              .attr("height", 18)
               .attr("fill", "black")
               .attr("stroke", "white")
-              .attr("stroke-width", "0.5px")
+              .attr("stroke-width", "1.5px")
               .attr("opacity", 1)
-              .attr("rx", 3)
+              .attr("rx", 4)
               .attr("class", "label-bg");
 
             labelsGroup.append("text")
               .attr("x", px)
               .attr("y", py)
               .attr("fill", curve.color)
-              .attr("font-size", "11px")
+              .attr("font-size", "12px")
               .attr("font-family", "monospace")
               .attr("text-anchor", "middle")
               .attr("font-weight", "900")
+              .attr("class", "pickup-label")
               .text(labelText);
               
             labelsGroup.append("line")
               .attr("x1", px)
               .attr("x2", px)
               .attr("y1", height)
-              .attr("y2", py - 10)
+              .attr("y2", py - 12)
               .attr("stroke", curve.color)
               .attr("stroke-width", 1.5)
-              .attr("stroke-dasharray", "2,1");
+              .attr("stroke-dasharray", "3,2");
           }
         }
       });
@@ -306,6 +317,7 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
       curves.forEach(curve => {
         curvesGroup.append("path")
           .datum(curve.points)
+          .attr("class", "curve-path")
           .attr("fill", "none")
           .attr("stroke", curve.color)
           .attr("stroke-width", 2)
@@ -330,33 +342,38 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
 
         const textGroup = iccGroup.append("g");
         const textStr = `${label}: ${val}A`;
+        const textW = textStr.length * 7 + 16;
         
         textGroup.append("rect")
-          .attr("x", ix - 35)
-          .attr("y", yPos - 10)
-          .attr("width", 70)
-          .attr("height", 14)
+          .attr("x", ix - textW/2)
+          .attr("y", yPos - 12)
+          .attr("width", textW)
+          .attr("height", 20)
           .attr("fill", "black")
-          .attr("opacity", 1) // Full opacity to cover grid lines
-          .attr("rx", 2)
+          .attr("stroke", color)
+          .attr("stroke-width", "1.5px")
+          .attr("opacity", 1)
+          .attr("rx", 6)
           .attr("class", "label-bg");
 
         textGroup.append("text")
           .attr("x", ix)
-          .attr("y", yPos)
+          .attr("y", yPos + 3)
           .attr("fill", color)
-          .attr("font-size", "9px")
+          .attr("font-size", "12px")
+          .attr("style", "paint-order: stroke; stroke: black; stroke-width: 2px; stroke-linecap: round; stroke-linejoin: round;")
           .attr("font-family", "monospace")
           .attr("text-anchor", "middle")
           .attr("font-weight", "bold")
+          .attr("class", "icc-label-text")
           .text(textStr);
       };
 
       const icc3x = newXScale(icc_3f);
       const icc1x = icc_1f ? newXScale(icc_1f) : null;
       let icc1y = 15;
-      if (icc1x !== null && Math.abs(icc3x - icc1x) < 80) {
-        icc1y = 30; // Deslocar se estiver perto
+      if (icc1x !== null && Math.abs(icc3x - icc1x) < 100) {
+        icc1y = 40; // More offset for better staggering
       }
 
       drawIcc(icc_3f, "Icc 3f", "#ef4444", 15);
@@ -388,44 +405,49 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
         }
 
         // Evitar sobreposição de rótulos de pontos especiais
-        let lx = px + 8;
-        let ly = py + 3;
-        const curW = p.label.length * 6 + 4;
+        let lx = px + 12;
+        let ly = py + 4;
+        const curW = p.label.length * 7 + 14;
         
         let attempts = 0;
-        while (attempts < 5) {
+        while (attempts < 10) {
           const overlap = pointLabels.some(label => {
-            return Math.abs(label.x - lx) < 60 && Math.abs(label.y - ly) < 16;
+            return Math.abs(label.x - lx) < 90 && Math.abs(label.y - ly) < 22;
           });
           if (overlap) {
-            ly += 16;
+            ly += 20;
             attempts++;
           } else {
             break;
           }
         }
+        // Keep in bounds
+        if (ly > height - 20) ly = py - 25;
+        if (lx > width - 70) lx = px - 70;
+
         pointLabels.push({x: lx, y: ly});
 
         const labelG = pointsGroup.append("g");
         labelG.append("rect")
-          .attr("x", lx - 3)
-          .attr("y", ly - 10)
+          .attr("x", lx - 4)
+          .attr("y", ly - 13)
           .attr("width", curW)
-          .attr("height", 14)
+          .attr("height", 18)
           .attr("fill", "black")
           .attr("stroke", "white")
-          .attr("stroke-width", "0.5px")
-          .attr("opacity", 1) // Full opacity to cover grid lines
-          .attr("rx", 3)
+          .attr("stroke-width", "1.5px")
+          .attr("opacity", 1)
+          .attr("rx", 4)
           .attr("class", "label-bg");
 
         labelG.append("text")
-          .attr("x", lx)
+          .attr("x", lx + curW/2 - 4)
           .attr("y", ly)
           .attr("fill", "white")
-          .attr("font-size", "10px")
+          .attr("font-size", "11px")
           .attr("font-family", "monospace")
           .attr("font-weight", "900")
+          .attr("text-anchor", "middle")
           .text(p.label);
       });
     };
@@ -526,7 +548,14 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
         </button>
       </div>
 
-      <svg ref={svgRef} width="100%" className={`h-[300px] sm:h-[600px] cursor-crosshair ${isZooming ? 'cursor-grabbing' : 'cursor-crosshair'}`} viewBox="0 0 800 600" preserveAspectRatio="xMidYMid meet" />
+      <svg 
+        ref={svgRef} 
+        width="100%" 
+        height="100%"
+        className={`flex-1 min-h-[300px] sm:min-h-[600px] cursor-crosshair ${isZooming ? 'cursor-grabbing' : 'cursor-crosshair'}`} 
+        viewBox="0 0 800 600" 
+        preserveAspectRatio="xMidYMid meet" 
+      />
       
       {/* Indicador de Zoom Ativo */}
       {isZooming && (
