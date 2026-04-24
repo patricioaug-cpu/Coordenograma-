@@ -171,7 +171,7 @@ Versão do Sistema: 1.1.0 PRO
             visibility: visible !important;
             width: 210mm !important;
             min-height: 297mm !important;
-            padding: 15mm !important;
+            padding: 10mm 15mm !important;
             margin: 0 !important;
             box-shadow: none !important;
             background: white !important;
@@ -242,6 +242,18 @@ Versão do Sistema: 1.1.0 PRO
           .coord-chart-container .tick text {
             fill: #000 !important;
           }
+          .coord-chart-container .label-bg {
+            fill: white !important;
+            stroke: #000 !important;
+            stroke-width: 0.5px !important;
+            opacity: 1 !important;
+          }
+          .coord-chart-container .icc-lines text,
+          .coord-chart-container .special-points text,
+          .coord-chart-container .dynamic-labels text {
+            fill: black !important;
+            font-weight: bold !important;
+          }
           .no-print {
             display: none !important;
           }
@@ -251,7 +263,7 @@ Versão do Sistema: 1.1.0 PRO
         }
         
         #printable-report {
-          padding: 25mm !important;
+          padding: 15mm 25mm !important;
           background-color: white;
           color: black;
           font-size: 11px;
@@ -543,7 +555,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
       {/* Seção 3: Coordenograma */}
       <section className="report-section page-break-before-always">
         <h3 className="report-section-title">3. Coordenograma de Proteção</h3>
-        <div className="border-2 border-black h-[450px] w-full bg-white flex items-center justify-center p-4">
+        <div className="border-2 border-black h-[500px] w-full bg-white flex items-center justify-center p-2">
            <div className="w-full h-full">
               <CoordChart 
                 curves={curves} 
@@ -758,7 +770,7 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
       {/* Seção 3: Coordenograma */}
       <section className="report-section page-break-before-always">
         <h3 className="report-section-title">3. Coordenograma de Seletividade</h3>
-        <div className="border-2 border-black h-[450px] w-full bg-white flex items-center justify-center p-4">
+        <div className="border-2 border-black h-[500px] w-full bg-white flex items-center justify-center p-2">
            <div className="w-full h-full">
               <CoordChart curves={curves} icc_3f={study.icc_3f} icc_1f={study.icc_1f} specialPoints={specialPoints} />
            </div>

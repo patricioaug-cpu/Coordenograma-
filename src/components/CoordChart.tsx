@@ -259,6 +259,19 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
             });
             pickupPositions.push(px);
 
+            const labelText = pickup.toFixed(0);
+            const labelW = labelText.length * 6 + 4;
+
+            labelsGroup.append("rect")
+              .attr("x", px - labelW/2)
+              .attr("y", py - 9)
+              .attr("width", labelW)
+              .attr("height", 12)
+              .attr("fill", "black")
+              .attr("opacity", 1)
+              .attr("rx", 2)
+              .attr("class", "label-bg");
+
             labelsGroup.append("text")
               .attr("x", px)
               .attr("y", py)
@@ -267,7 +280,7 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
               .attr("font-family", "monospace")
               .attr("text-anchor", "middle")
               .attr("font-weight", "bold")
-              .text(pickup.toFixed(0));
+              .text(labelText);
               
             labelsGroup.append("line")
               .attr("x1", px)
@@ -322,8 +335,9 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
           .attr("width", 70)
           .attr("height", 14)
           .attr("fill", "black")
-          .attr("opacity", 0.7)
-          .attr("rx", 2);
+          .attr("opacity", 1) // Full opacity to cover grid lines
+          .attr("rx", 2)
+          .attr("class", "label-bg");
 
         textGroup.append("text")
           .attr("x", ix)
@@ -397,8 +411,9 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
           .attr("width", curW)
           .attr("height", 10)
           .attr("fill", "black")
-          .attr("opacity", 0.7)
-          .attr("rx", 2);
+          .attr("opacity", 1) // Full opacity to cover grid lines
+          .attr("rx", 2)
+          .attr("class", "label-bg");
 
         labelG.append("text")
           .attr("x", lx)
