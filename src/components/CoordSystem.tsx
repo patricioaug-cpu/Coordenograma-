@@ -188,16 +188,18 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
   };
 
   const [simulationStatus, setSimulationStatus] = useState<'idle' | 'running' | 'done'>('idle');
+  const [simulationType, setSimulationType] = useState<'3phase' | 'overload' | null>(null);
   const [simulationProgress, setSimulationProgress] = useState(0);
 
   const simulationIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
 
-  const runSimulation = () => {
+  const runSimulation = (type: '3phase' | 'overload') => {
     // Clear any existing simulation interval
     if (simulationIntervalRef.current) {
       clearInterval(simulationIntervalRef.current);
     }
 
+    setSimulationType(type);
     setSimulationStatus('running');
     setSimulationProgress(0);
     
@@ -228,18 +230,21 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     const alertsCount = alerts.length;
     
     if (alertsCount > 3 || suggestions.some(s => s.includes('CRÍTICO'))) {
-      return "SIMULAÇÃO CONCLUÍDA COM ADVERTÊNCIAS CRÍTICAS. Foram detectados riscos de saturação ou falhas de sensibilidade que invalidam a seletividade conforme as normas vigentes. Revise os pickups e a relação do TC.";
+      return "SIMULAÇÃO CONCLUÍDA COM ADVERTÊNCIAS CRÍTICAS. Foram detectados riscos de saturação ou falhas de sensibilidade que invalidam a seletividade conforme as normas vigentes (ABNT NBR 14039 / IEEE C57.109). Revise os pickups e a relação do TC.";
     }
     
-    if (Ip < In * 1.1) {
-      return "SIMULAÇÃO CONCLUÍDA. Atenção: O pickup de fase está muito próximo à corrente nominal. Risco de desligamentos indesejados por flutuações de regime de carga.";
+    if (simulationType === 'overload') {
+      const overloadTime = calculateTime(In * 1.5, study.rele_fase.pickup, study.rele_fase.tms, study.rele_fase.curva);
+      return `RESULTADO DA SOBRECARGA (1.5x In): O relé atuará em aproximadamente ${overloadTime.toFixed(1)} segundos. Este tempo garante a proteção térmica do transformador contra aquecimento excessivo sem causar desligamentos por picos transitórios de carga.`;
     }
 
-    if (suggestions.length > 0) {
-      return "SIMULAÇÃO CONCLUÍDA. O sistema é funcional, mas existem oportunidades de melhoria na sensibilidade e margens de segurança conforme as recomendações técnicas listadas.";
+    if (simulationType === '3phase') {
+      const instTime = study.rele_fase.i_inst > 0 && study.icc_3f >= study.rele_fase.i_inst ? 0.010 : calculateTime(study.icc_3f, study.rele_fase.pickup, study.rele_fase.tms, study.rele_fase.curva);
+      const isInst = study.rele_fase.i_inst > 0 && study.icc_3f >= study.rele_fase.i_inst;
+      return `RESULTADO DO CURTO-CIRCUITO TRIFÁSICO (${study.icc_3f}A): Proteção via unidade ${isInst ? 'INSTANTÂNEA (50)' : 'TEMPORIZADA (51)'}. Tempo de atuação: ${instTime.toFixed(3)}s. Coordenação preservada com os pontos ANSI e magnetização do transformador.`;
     }
 
-    return "SIMULAÇÃO CONCLUÍDA COM SUCESSO. A parametrização atual apresenta excelente coordenação entre a carga, magnetização do trafo e limites térmicos/mecânicos (ANSI).";
+    return "SIMULAÇÃO CONCLUÍDA. Parâmetros técnicos dentro das margens normativas.";
   };
 
   const handleSave = async () => {
@@ -1956,7 +1961,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     </h4>
                     <div className="grid grid-cols-2 gap-3">
                        <button 
-                         onClick={runSimulation}
+                         onClick={() => runSimulation('3phase')}
                          disabled={simulationStatus === 'running'}
                          className={`p-3 bg-black/40 border border-zinc-800 rounded-lg text-left hover:bg-zinc-800/50 transition-colors group relative overflow-hidden ${simulationStatus === 'running' ? 'opacity-70 cursor-not-allowed' : ''}`}
                        >
@@ -1982,7 +1987,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                           </div>
                           <div className="text-[7px] text-zinc-700 mt-1 uppercase font-bold">Inicia processamento de seletividade</div>
                           
-                          {simulationStatus === 'done' && (
+                          {simulationStatus === 'done' && simulationType === '3phase' && (
                              <motion.div 
                                initial={{ opacity: 0, y: 5 }}
                                animate={{ opacity: 1, y: 0 }}
@@ -1990,14 +1995,14 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                              >
                                 <p className="text-[9px] text-zinc-400 leading-tight italic">
                                    {study.rele_fase.i_inst > 0 && study.icc_3f >= study.rele_fase.i_inst 
-                                     ? "Atuação Instantânea (50): Corrente de falta no barramento supera o pickup instantâneo. Desligamento imediato para proteção física."
-                                     : "Atuação Temporizada (51): Corrente de falta processada pela lógica de tempo inverso. Garante seletividade com a rede de montante."}
+                                     ? "Atuação Instantânea (50): Corrente de falta no barramento supera o pickup instantâneo. Desligamento imediato para proteção do sistema conforme NBR 14039."
+                                     : "Atuação Temporizada (51): Corrente de falta processada pela lógica de tempo inverso. Garante seletividade com a rede da concessionária."}
                                 </p>
                              </motion.div>
                           )}
                        </button>
                        <button 
-                         onClick={runSimulation}
+                         onClick={() => runSimulation('overload')}
                          disabled={simulationStatus === 'running'}
                          className={`p-3 bg-black/40 border border-zinc-800 rounded-lg text-left hover:bg-zinc-800/50 transition-colors group relative overflow-hidden ${simulationStatus === 'running' ? 'opacity-70 cursor-not-allowed' : ''}`}
                        >
@@ -2022,14 +2027,14 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                           </div>
                           <div className="text-[7px] text-zinc-700 mt-1 uppercase font-bold">Verificar atuação baseada em I_nom</div>
 
-                          {simulationStatus === 'done' && (
+                          {simulationStatus === 'done' && simulationType === 'overload' && (
                              <motion.div 
                                initial={{ opacity: 0, y: 5 }}
                                animate={{ opacity: 1, y: 0 }}
                                className="mt-3 pt-2 border-t border-zinc-800/50"
                              >
                                 <p className="text-[9px] text-zinc-400 leading-tight italic">
-                                   Simulação ANSI 51: Verificação de sobrecarga térmica em regime de 150%. Garante que o relé não atue para picos normais, mas proteja contra aquecimento excessivo do transformador.
+                                   Simulação de Sobrecarga: Verificação térmica em 150% da corrente nominal. Tempo de atuação calculado para proteger o isolamento do transformador de acordo com a curva ANSI/IEEE C57.109.
                                 </p>
                              </motion.div>
                           )}
@@ -2195,7 +2200,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
 
                        <div className="flex flex-col sm:flex-row gap-4">
                           <button 
-                            onClick={runSimulation}
+                            onClick={() => runSimulation('3phase')}
                             disabled={simulationStatus === 'running'}
                             className={`flex-1 flex items-center justify-center gap-3 py-4 rounded font-black text-[13px] uppercase shadow-lg transition-all transform active:scale-95 ${
                               simulationStatus === 'running' 

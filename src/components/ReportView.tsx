@@ -99,6 +99,28 @@ Versão do Sistema: 1.1.0 PRO
   return createPortal(
     <div className="fixed inset-0 bg-zinc-950 z-[9999] flex flex-col items-center overflow-y-auto scrollbar-hide report-portal-wrapper">
       <style>{`
+        /* Estilo base do gráfico no relatório (tela e impressão) */
+        .coord-chart-container {
+          background-color: white !important;
+          border: 2px solid #000 !important;
+          max-width: 100% !important;
+          width: 100% !important;
+          height: auto !important;
+          aspect-ratio: 4 / 3 !important;
+          padding: 0 !important;
+          margin: 0 !important;
+          box-shadow: none !important;
+          border-radius: 0 !important;
+        }
+
+        .coord-chart-container svg {
+          display: block !important;
+          width: 100% !important;
+          height: 100% !important;
+          min-height: 0 !important;
+          background-color: white !important;
+        }
+
         @media print {
           @page {
             size: A4 portrait;
@@ -216,18 +238,22 @@ Versão do Sistema: 1.1.0 PRO
           /* Ajuste do Gráfico para Impressão */
           .coord-chart-container {
             background-color: white !important;
-            border: 1px solid #000 !important;
+            border: 2px solid #000 !important;
             max-width: 100% !important;
-          }
-          .coord-chart-container {
-            background-color: white !important;
-            border-color: #000 !important;
+            width: 100% !important;
+            height: auto !important;
+            aspect-ratio: 4 / 3 !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
           }
           .coord-chart-container svg {
             display: block !important;
             visibility: visible !important;
             width: 100% !important;
             height: 100% !important;
+            min-height: 0 !important;
             background-color: white !important;
           }
           .coord-chart-container .label-axis {
@@ -575,8 +601,8 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
       {/* Seção 3: Coordenograma */}
       <section className="report-section page-break-before-always">
         <h3 className="report-section-title">3. Coordenograma de Proteção</h3>
-        <div className="border-2 border-black h-[600px] w-full bg-white flex items-center justify-center p-2">
-           <div className="w-full h-full">
+        <div className="w-full bg-white flex items-center justify-center">
+           <div className="w-full h-auto">
               <CoordChart 
                 curves={curves} 
                 icc_3f={study.icc_3f} 
@@ -802,8 +828,8 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
       {/* Seção 3: Coordenograma */}
       <section className="report-section page-break-before-always">
         <h3 className="report-section-title">3. Coordenograma de Seletividade</h3>
-        <div className="border-2 border-black h-[600px] w-full bg-white flex items-center justify-center p-2">
-           <div className="w-full h-full">
+        <div className="w-full bg-white flex items-center justify-center">
+           <div className="w-full h-auto">
               <CoordChart curves={curves} icc_3f={study.icc_3f} icc_1f={study.icc_1f} specialPoints={specialPoints} />
            </div>
         </div>
