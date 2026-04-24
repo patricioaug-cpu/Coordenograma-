@@ -104,6 +104,9 @@ Versão do Sistema: 1.1.0 PRO
             size: A4 portrait;
             margin: 0;
           }
+          *, *:before, *:after {
+            box-sizing: border-box !important;
+          }
           html, body {
             height: auto !important;
             overflow: visible !important;
@@ -140,7 +143,7 @@ Versão do Sistema: 1.1.0 PRO
             transform: none !important;
             margin: 0 !important;
             padding: 0 !important;
-            width: 210mm !important;
+            width: 100% !important;
             box-shadow: none !important;
             display: block !important;
             height: auto !important;
@@ -156,10 +159,22 @@ Versão do Sistema: 1.1.0 PRO
             box-shadow: none !important;
             background: white !important;
             position: relative !important;
+            overflow-wrap: break-word !important;
+            word-wrap: break-word !important;
+            overflow-x: hidden !important;
+          }
+          #printable-report table {
+            table-layout: fixed !important;
+            width: 100% !important;
+          }
+          #printable-report * {
+            max-width: 100% !important;
+            overflow-wrap: break-word !important;
           }
           .report-section {
             page-break-inside: avoid;
             margin-bottom: 25px;
+            width: 100% !important;
           }
           .page-break-before-always {
             page-break-before: always;
@@ -168,17 +183,24 @@ Versão do Sistema: 1.1.0 PRO
           .text-zinc-600, .text-zinc-500, .text-zinc-400 {
             color: #333 !important;
           }
+          .report-table {
+            width: 100% !important;
+            table-layout: fixed !important;
+            border-collapse: collapse !important;
+          }
+          .report-table th, .report-table td {
+            border: 1px solid black !important;
+            word-break: break-all !important;
+            overflow-wrap: anywhere !important;
+          }
           .report-table th {
             background: #e2e8f0 !important;
-            border: 1px solid black !important;
-          }
-          .report-table td {
-             border: 1px solid black !important;
           }
           /* Ajuste do Gráfico para Impressão */
           .coord-chart-container {
             background-color: white !important;
             border: 1px solid #000 !important;
+            max-width: 100% !important;
           }
           .coord-chart-container svg {
             background-color: white !important;
@@ -242,9 +264,9 @@ Versão do Sistema: 1.1.0 PRO
 
         .calc-table {
           width: 100%;
-          border-collapse: separate;
-          border-spacing: 12px 0;
-          margin: 0 -12px;
+          border-collapse: collapse;
+          margin-bottom: 20px;
+          table-layout: fixed;
         }
 
         .calc-box {
@@ -255,6 +277,9 @@ Versão do Sistema: 1.1.0 PRO
           font-size: 9px;
           line-height: 1.6;
           vertical-align: top;
+          width: 50%;
+          word-break: break-all;
+          overflow-wrap: anywhere;
         }
 
         .calc-formula {
@@ -406,19 +431,19 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
       {/* Seção 1: Identificação */}
       <section className="report-section">
         <h3 className="report-section-title">1. Identificação do Projeto</h3>
-        <table className="w-full text-[10px] border-collapse">
+        <table className="w-full text-[10px] border-collapse table-fixed">
           <tbody>
             <tr>
-              <td className="w-1/4 py-1.5 border-b border-zinc-200 font-bold text-zinc-500 uppercase">Projeto:</td>
-              <td className="py-1.5 border-b border-zinc-200 font-black uppercase text-zinc-900">{study.projeto}</td>
-              <td className="w-1/4 py-1.5 border-b border-zinc-200 font-bold text-zinc-500 uppercase pl-4">Responsável:</td>
-              <td className="py-1.5 border-b border-zinc-200 font-black uppercase text-zinc-900">{study.rt_nome}</td>
+              <td className="w-1/4 py-1.5 border-b border-zinc-200 font-bold text-zinc-500 uppercase overflow-hidden whitespace-nowrap">Projeto:</td>
+              <td className="py-1.5 border-b border-zinc-200 font-black uppercase text-zinc-900 break-words">{study.projeto}</td>
+              <td className="w-1/4 py-1.5 border-b border-zinc-200 font-bold text-zinc-500 uppercase pl-4 overflow-hidden whitespace-nowrap">Responsável:</td>
+              <td className="py-1.5 border-b border-zinc-200 font-black uppercase text-zinc-900 break-words">{study.rt_nome}</td>
             </tr>
             <tr>
-              <td className="py-1.5 border-b border-zinc-200 font-bold text-zinc-500 uppercase">Cliente:</td>
-              <td className="py-1.5 border-b border-zinc-200 font-black uppercase text-zinc-900">{study.proprietario}</td>
-              <td className="py-1.5 border-b border-zinc-200 font-bold text-zinc-500 uppercase pl-4">Concessionária:</td>
-              <td className="py-1.5 border-b border-zinc-200 font-black uppercase text-zinc-900">{concessionaria?.nome}</td>
+              <td className="py-1.5 border-b border-zinc-200 font-bold text-zinc-500 uppercase overflow-hidden whitespace-nowrap">Cliente:</td>
+              <td className="py-1.5 border-b border-zinc-200 font-black uppercase text-zinc-900 break-words">{study.proprietario}</td>
+              <td className="py-1.5 border-b border-zinc-200 font-bold text-zinc-500 uppercase pl-4 overflow-hidden whitespace-nowrap">Concessionária:</td>
+              <td className="py-1.5 border-b border-zinc-200 font-black uppercase text-zinc-900 break-words">{concessionaria?.nome}</td>
             </tr>
           </tbody>
         </table>
@@ -623,21 +648,21 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
 
       <section className="report-section">
         <h3 className="report-section-title">1. Dados da Unidade Consumidora</h3>
-        <table className="w-full text-[10px] border-collapse bg-zinc-50/50">
+        <table className="w-full text-[10px] border-collapse bg-zinc-50/50 table-fixed">
           <tbody>
             <tr>
-              <td className="p-3 border border-zinc-200 w-1/2 align-top">
-                <div className="space-y-1.5">
-                  <p><strong className="text-zinc-500 uppercase text-[7px]">Projeto:</strong> {study.projeto}</p>
-                  <p><strong className="text-zinc-500 uppercase text-[7px]">Proprietário:</strong> {study.proprietario}</p>
-                  <p><strong className="text-zinc-500 uppercase text-[7px]">Logradouro:</strong> {study.endereco}</p>
+              <td className="p-3 border border-zinc-200 w-1/2 align-top overflow-hidden">
+                <div className="space-y-1.5 break-words">
+                  <p><strong className="text-zinc-500 uppercase text-[7px] block">Projeto:</strong> {study.projeto}</p>
+                  <p><strong className="text-zinc-500 uppercase text-[7px] block">Proprietário:</strong> {study.proprietario}</p>
+                  <p><strong className="text-zinc-500 uppercase text-[7px] block">Logradouro:</strong> {study.endereco}</p>
                 </div>
               </td>
-              <td className="p-3 border border-zinc-200 w-1/2 align-top">
-                <div className="space-y-1.5">
-                  <p><strong className="text-zinc-500 uppercase text-[7px]">CNPJ/CPF:</strong> {study.cnpj_proprietario}</p>
-                  <p><strong className="text-zinc-500 uppercase text-[7px]">Responsável Técnico:</strong> {study.rt_nome}</p>
-                  <p><strong className="text-zinc-500 uppercase text-[7px]">Demanda:</strong> {study.demanda_nova} kW</p>
+              <td className="p-3 border border-zinc-200 w-1/2 align-top overflow-hidden">
+                <div className="space-y-1.5 break-words">
+                  <p><strong className="text-zinc-500 uppercase text-[7px] block">CNPJ/CPF:</strong> {study.cnpj_proprietario}</p>
+                  <p><strong className="text-zinc-500 uppercase text-[7px] block">Responsável Técnico:</strong> {study.rt_nome}</p>
+                  <p><strong className="text-zinc-500 uppercase text-[7px] block">Demanda:</strong> {study.demanda_nova} kW</p>
                 </div>
               </td>
             </tr>
