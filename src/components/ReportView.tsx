@@ -97,7 +97,7 @@ Versão do Sistema: 1.1.0 PRO
   };
 
   return createPortal(
-    <div className="fixed inset-0 bg-zinc-950 z-[9999] flex flex-col items-center overflow-y-auto pb-40 scrollbar-hide report-portal-wrapper">
+    <div className="fixed inset-0 bg-zinc-950 z-[9999] flex flex-col items-center overflow-y-auto scrollbar-hide report-portal-wrapper">
       <style>{`
         @media print {
           @page {
@@ -122,33 +122,42 @@ Versão do Sistema: 1.1.0 PRO
             top: 0 !important;
           }
           /* Esconde a aplicação principal e outros elementos */
-          #root, .no-print, .no-print * {
+          #root, .no-print, [class*="no-print"] {
             display: none !important;
             visibility: hidden !important;
             opacity: 0 !important;
             height: 0 !important;
+            width: 0 !important;
             overflow: hidden !important;
           }
           /* Garante que o wrapper do portal seja visível */
           .report-portal-wrapper {
             display: block !important;
-            position: absolute !important;
-            top: 0 !important;
-            left: 0 !important;
-            width: 210mm !important;
+            position: static !important;
+            width: 100% !important;
             height: auto !important;
             background: white !important;
+            background-color: white !important;
             overflow: visible !important;
             padding: 0 !important;
             margin: 0 !important;
+            box-shadow: none !important;
+          }
+          /* Remove backgrounds escuros e artifacts de UI */
+          .report-portal-wrapper,
+          .report-portal-wrapper div,
+          .report-portal-wrapper section {
+            background-color: white !important;
+            background-image: none !important;
+            box-shadow: none !important;
+            border-color: #eee !important;
           }
           /* Override inline styles for preview scaling during print */
-          .report-portal-wrapper div:not(.no-print) {
+          .report-portal-wrapper div:not(#printable-report) {
             transform: none !important;
             margin: 0 !important;
             padding: 0 !important;
             width: 100% !important;
-            box-shadow: none !important;
             display: block !important;
             height: auto !important;
             position: static !important;
@@ -408,6 +417,9 @@ Versão do Sistema: 1.1.0 PRO
             Impressão/PDF via Web: <a href="https://coordenograma.vercel.app" target="_blank" rel="noopener noreferrer" className="text-green-500 font-bold hover:underline">coordenograma.vercel.app</a>
           </p>
       </div>
+
+      {/* Spacer for bottom padding in browser view, hidden in print */}
+      <div className="h-40 w-full no-print shrink-0"></div>
     </div>,
     document.body
   );
