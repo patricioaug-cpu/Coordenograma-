@@ -652,9 +652,21 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
         </table>
       </section>
 
+      {/* Normas Técnicas */}
+      <section className="report-section">
+        <h3 className="report-section-title">6. Normas Técnicas Utilizadas</h3>
+        <div className="bg-zinc-50 p-4 border border-zinc-200">
+           <ul className="grid grid-cols-2 gap-2 text-[9px] font-mono text-zinc-600 uppercase list-disc list-inside">
+             {study.normas_selecionadas?.map((n: string, i: number) => (
+                <li key={i}>{n}</li>
+             ))}
+           </ul>
+        </div>
+      </section>
+
       {/* Parecer Técnico */}
       <section className="mb-6 pt-4 border-t-2 border-black">
-        <h3 className="report-section-title">6. Parecer Técnico Final</h3>
+        <h3 className="report-section-title">7. Parecer Técnico Final</h3>
         <div className="bg-zinc-50 p-4 border border-zinc-200 text-[10px] space-y-2 uppercase font-mono italic">
            {getTechnicalSuggestions(study).length === 0 ? (
              <p className="text-green-800">O sistema de proteção dimensionado atende integralmente às exigências normativas da ABNT NBR 14039. As curvas de proteção garantem a integridade dos equipamentos e a seletividade com a concessionária.</p>
@@ -843,6 +855,17 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
                 <p key={idx} className="uppercase leading-tight">• {sug}</p>
              ))
            )}
+        </div>
+      </section>
+
+      <section className="mb-4">
+        <h3 className="report-section-title">6. Normas Técnicas Utilizadas</h3>
+        <div className="p-3 border border-zinc-200 rounded bg-zinc-50">
+           <ul className="grid grid-cols-2 gap-x-6 gap-y-1 text-[8px] font-mono text-zinc-600 uppercase list-disc list-inside">
+             {study.normas_selecionadas?.map((n: string, i: number) => (
+                <li key={i}>{n}</li>
+             ))}
+           </ul>
         </div>
       </section>
 

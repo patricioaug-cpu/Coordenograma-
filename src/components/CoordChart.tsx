@@ -108,7 +108,7 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
   useEffect(() => {
     if (!svgRef.current) return;
 
-    const margin = { top: 40, right: 40, bottom: 60, left: 70 };
+    const margin = { top: 40, right: 60, bottom: 80, left: 80 };
     const width = 800 - margin.left - margin.right;
     const height = 600 - margin.top - margin.bottom;
 
@@ -205,28 +205,6 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
     const bisectCurrent = d3.bisector((d: Point) => d.I).left;
     let currentXScale = xScaleBase;
     let currentYScale = yScaleBase;
-
-    // Labels de Eixo
-    mainGroup.append("text")
-      .attr("x", width / 2)
-      .attr("y", height + 40)
-      .attr("fill", "rgba(34, 197, 94, 0.6)")
-      .attr("font-size", "10px")
-      .attr("font-family", "monospace")
-      .attr("text-anchor", "middle")
-      .attr("font-weight", "bold")
-      .text("CORRENTE (A)");
-
-    mainGroup.append("text")
-      .attr("transform", "rotate(-90)")
-      .attr("x", -height / 2)
-      .attr("y", -45)
-      .attr("fill", "rgba(34, 197, 94, 0.6)")
-      .attr("font-size", "10px")
-      .attr("font-family", "monospace")
-      .attr("text-anchor", "middle")
-      .attr("font-weight", "bold")
-      .text("TEMPO (s)");
 
     // Função Principal de Renderização / Update
     const render = (newXScale: any, newYScale: any) => {
@@ -387,47 +365,48 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
           pointsGroup.append("circle").attr("cx", px).attr("cy", py).attr("r", 4).attr("fill", "#f97316").attr("stroke", "white").attr("stroke-width", 1);
         }
 
-        // Evitar sobreposição de rótulos de pontos especiais
-        let lx = px + 8;
-        let ly = py + 3;
-        const curW = p.label.length * 6 + 4;
+        // Evitar sobreposição de rótulos de pontos especiais e garantir que não sejam clipados
+        let lx = px + 10;
+        let ly = py + 4;
+        const curW = p.label.length * 7 + 6;
         
         let attempts = 0;
-        while (attempts < 5) {
+        while (attempts < 8) {
           const overlap = pointLabels.some(label => {
-            return Math.abs(label.x - lx) < 60 && Math.abs(label.y - ly) < 16;
+            return Math.abs(label.x - lx) < 70 && Math.abs(label.y - ly) < 18;
           });
           if (overlap) {
-            ly += 16;
+            ly += 18;
             attempts++;
           } else {
             break;
           }
         }
-        // Keep in bounds
-        if (ly > height - 20) ly = py - 25;
-        if (lx > width - 70) lx = px - 70;
+        // Keep in bounds relative to mainGroup
+        if (ly > height - 10) ly = py - 20;
+        if (lx > width - 40) lx = px - (curW + 10);
 
         pointLabels.push({x: lx, y: ly});
 
-        const labelG = pointsGroup.append("g");
+        // Usamos labelsGroup (não clipado) para os rótulos de texto
+        const labelG = labelsGroup.append("g");
         labelG.append("rect")
           .attr("x", lx - 3)
-          .attr("y", ly - 10)
+          .attr("y", ly - 11)
           .attr("width", curW)
-          .attr("height", 14)
+          .attr("height", 16)
           .attr("fill", "black")
           .attr("stroke", "white")
           .attr("stroke-width", "0.5px")
-          .attr("opacity", 1) // Full opacity to cover grid lines
+          .attr("opacity", 1)
           .attr("rx", 3)
           .attr("class", "label-bg");
 
         labelG.append("text")
-          .attr("x", lx + curW/2 - 4)
+          .attr("x", lx + curW/2 - 3)
           .attr("y", ly)
           .attr("fill", "white")
-          .attr("font-size", "10px")
+          .attr("font-size", "11px")
           .attr("font-family", "monospace")
           .attr("font-weight", "900")
           .attr("text-anchor", "middle")
@@ -502,8 +481,25 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
       .on("mouseout", () => tooltipGroup.style("display", "none"));
 
     // Static Axis Labels
-    svg.append("text").attr("transform", `translate(${margin.left + width/2}, ${margin.top + height + 45})`).style("text-anchor", "middle").attr("fill", "#22c55e").attr("font-family", "monospace").attr("class", "label-axis").text("CORRENTE (A)");
-    svg.append("text").attr("transform", `translate(${margin.left - 50}, ${margin.top + height/2}) rotate(-90)`).style("text-anchor", "middle").attr("fill", "#22c55e").attr("font-family", "monospace").attr("class", "label-axis").text("TEMPO (s)");
+    svg.append("text")
+      .attr("transform", `translate(${margin.left + width/2}, ${margin.top + height + 55})`)
+      .style("text-anchor", "middle")
+      .attr("fill", "#22c55e")
+      .attr("font-size", "12px")
+      .attr("font-weight", "bold")
+      .attr("font-family", "monospace")
+      .attr("class", "label-axis")
+      .text("CORRENTE (A)");
+
+    svg.append("text")
+      .attr("transform", `translate(${margin.left - 55}, ${margin.top + height/2}) rotate(-90)`)
+      .style("text-anchor", "middle")
+      .attr("fill", "#22c55e")
+      .attr("font-size", "12px")
+      .attr("font-weight", "bold")
+      .attr("font-family", "monospace")
+      .attr("class", "label-axis")
+      .text("TEMPO (s)");
 
   }, [curves, icc_3f, icc_1f, Inominal, specialPoints]);
 

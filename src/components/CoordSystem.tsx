@@ -5,7 +5,7 @@ import { generateFullRelayCurve, CurveType, calculateInominal, calculateANSIPoin
 import { CoordChart, SpecialPoint } from './CoordChart';
 import { auth, db, handleFirestoreError } from '../lib/firebase';
 import { signOut } from 'firebase/auth';
-import { Settings, Save, FileText, LayoutList, LogOut, ChevronRight, AlertTriangle, CheckCircle2, User as UserIcon, ShieldAlert, Menu, X as CloseIcon, Plus, Trash2, History as HistoryIcon, Search, HelpCircle, Cpu, Info, Zap } from 'lucide-react';
+import { Settings, Save, FileText, LayoutList, LogOut, ChevronRight, AlertTriangle, CheckCircle2, User as UserIcon, ShieldAlert, Menu, X as CloseIcon, Plus, Trash2, History as HistoryIcon, Search, HelpCircle, Cpu, Info, Zap, Lightbulb } from 'lucide-react';
 import { collection, addDoc, query, where, getDocs, deleteDoc, doc, serverTimestamp, orderBy } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { AdminPanel } from './AdminPanel';
@@ -64,6 +64,7 @@ interface StudyData {
   };
   geracao_propria: { habilitada: boolean; descricao: string; i_adj: number; t_adj: number };
   sincronismo: { habilitada: boolean; ajuste: string; i_low: number; i_high: number };
+  isAutoEnabled: boolean;
   rele_fase: {
     pickup: number;
     tms: number;
@@ -117,7 +118,7 @@ const DEFAULT_STUDY: StudyData = {
   rt_tel: '',
   art_numero: '',
   codigo_instalacao: '',
-  normas_selecionadas: ['CNC-OMBR-ENS-18-001', 'CNC-OMBR-ENS-18-002'],
+  normas_selecionadas: ['ABNT NBR 14039', 'IEEE C57.109', 'IEC 60255', 'Resolução Normativa ANEEL 1.000/2021'],
   funcoes_adicionais: {
     '27': { habilitada: false, ajuste: '', v_pick: 92, t_pick: 2.0 },
     '59': { habilitada: false, ajuste: '', v_pick: 110, t_pick: 1.0 },
@@ -130,6 +131,7 @@ const DEFAULT_STUDY: StudyData = {
   },
   geracao_propria: { habilitada: false, descricao: '', i_adj: 0, t_adj: 0 },
   sincronismo: { habilitada: false, ajuste: '', i_low: 0, i_high: 0 },
+  isAutoEnabled: false,
   rele_fase: { pickup: 30, tms: 0.1, curva: 'IEC_NI', A: 0.14, B: 0, P: 0.02, i_def: 0, t_def: 0, i_inst: 0 },
   rele_neutro: { pickup: 10, tms: 0.1, curva: 'IEC_NI', A: 0.14, B: 0, P: 0.02, i_def: 0, t_def: 0, i_inst: 0 }
 };
@@ -145,6 +147,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
   const [savedCalculos, setSavedCalculos] = useState<any[]>([]);
   const [isSaving, setIsSaving] = useState(false);
   const [showHelp, setShowHelp] = useState(false);
+  const [showManualAdjustmentInfo, setShowManualAdjustmentInfo] = useState(false);
   const [saveMessage, setSaveMessage] = useState<{ type: 'success' | 'error', text: string } | null>(null);
   const [isDeleting, setIsDeleting] = useState<string | null>(null);
   const [confirmDeleteId, setConfirmDeleteId] = useState<string | null>(null);
@@ -206,16 +209,37 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     
     let progress = 0;
     simulationIntervalRef.current = setInterval(() => {
-      progress += Math.random() * 15;
+      progress += Math.random() * 20;
       if (progress >= 100) {
         progress = 100;
         if (simulationIntervalRef.current) clearInterval(simulationIntervalRef.current);
         setTimeout(() => {
           setSimulationStatus('done');
-        }, 300);
+        }, 500);
       }
       setSimulationProgress(progress);
-    }, 120);
+    }, 150);
+  };
+
+  const getSimulationResultText = () => {
+    const In = calculateInominal(study.trafo_kva, study.trafo_v_prim);
+    const Ip = study.rele_fase.pickup;
+    const suggestions = getTechnicalSuggestions(study);
+    const alertsCount = alerts.length;
+    
+    if (alertsCount > 3 || suggestions.some(s => s.includes('CRÍTICO'))) {
+      return "SIMULAÇÃO CONCLUÍDA COM ADVERTÊNCIAS CRÍTICAS. Foram detectados riscos de saturação ou falhas de sensibilidade que invalidam a seletividade conforme as normas vigentes. Revise os pickups e a relação do TC.";
+    }
+    
+    if (Ip < In * 1.1) {
+      return "SIMULAÇÃO CONCLUÍDA. Atenção: O pickup de fase está muito próximo à corrente nominal. Risco de desligamentos indesejados por flutuações de regime de carga.";
+    }
+
+    if (suggestions.length > 0) {
+      return "SIMULAÇÃO CONCLUÍDA. O sistema é funcional, mas existem oportunidades de melhoria na sensibilidade e margens de segurança conforme as recomendações técnicas listadas.";
+    }
+
+    return "SIMULAÇÃO CONCLUÍDA COM SUCESSO. A parametrização atual apresenta excelente coordenação entre a carga, magnetização do trafo e limites térmicos/mecânicos (ANSI).";
   };
 
   const handleSave = async () => {
@@ -292,17 +316,30 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     }
   };
 
+  useEffect(() => {
+    if (study.isAutoEnabled) {
+      autoAdjust();
+    }
+  }, [study.trafo_kva, study.trafo_v_prim, study.isAutoEnabled]);
+
   const autoAdjust = () => {
     // Ip = S / (V * sqrt(3)) * K
-    const Inom = (study.trafo_kva * 1000) / (study.trafo_v_prim * 1.73);
-    const pickupFase = Math.ceil(Inom * 1.5); // Fixed for example
+    // O ajuste automático calcula a corrente nominal do transformador
+    // e define o Pickup de Fase em 1.5x Inom (conforme normas usuais de proteção de transformadores)
+    // O Pickup de Neutro é ajustado para 20% do Pickup de Fase.
+    const Inom = (study.trafo_kva * 1000) / (study.trafo_v_prim * 1.732);
+    const pickupFase = Math.ceil(Inom * 1.5); 
     const pickupNeutro = Math.ceil(pickupFase * 0.2);
     
-    setStudy({
-      ...study,
-      rele_fase: { ...study.rele_fase, pickup: pickupFase },
-      rele_neutro: { ...study.rele_neutro, pickup: pickupNeutro }
-    });
+    setStudy(prev => ({
+      ...prev,
+      rele_fase: { ...prev.rele_fase, pickup: pickupFase },
+      rele_neutro: { ...prev.rele_neutro, pickup: pickupNeutro }
+    }));
+
+    // Acionar a explicação visual
+    setShowManualAdjustmentInfo(true);
+    setTimeout(() => setShowManualAdjustmentInfo(false), 8000);
   };
 
   const addEquipamento = () => {
@@ -1151,13 +1188,92 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <h3 className="text-xs font-bold flex items-center gap-2 text-green-200">
                       <Cpu className="w-3.5 h-3.5" /> AJUSTES DE RELÉ (51/51N)
                     </h3>
-                    <button 
-                      onClick={autoAdjust}
-                      className="text-[9px] px-2 py-0.5 bg-green-900/30 border border-green-500/30 text-green-500 rounded hover:bg-green-500 hover:text-black transition-all font-bold"
-                    >
-                      AJUSTE AUTO
-                    </button>
+                    <div className="flex items-center gap-2 relative">
+                       <div className="flex items-center gap-2 bg-zinc-950 px-2 py-1 rounded-md border border-zinc-800">
+                         <span className="text-[9px] font-bold text-zinc-500 uppercase">Auto</span>
+                         <button 
+                           onClick={() => setStudy({...study, isAutoEnabled: !study.isAutoEnabled})}
+                           className={`relative inline-flex h-4 w-8 items-center rounded-full transition-colors focus:outline-none ${study.isAutoEnabled ? 'bg-green-600' : 'bg-zinc-700'}`}
+                         >
+                           <span className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${study.isAutoEnabled ? 'translate-x-4' : 'translate-x-1'}`} />
+                         </button>
+                       </div>
+                       <button 
+                         onClick={autoAdjust}
+                         title="Executar ajuste automático pontual"
+                         className="text-[9px] px-2 py-1 bg-green-900/30 border border-green-500/30 text-green-500 rounded hover:bg-green-500 hover:text-black transition-all font-bold uppercase"
+                       >
+                         Ajustar Agora
+                       </button>
+
+                       <AnimatePresence>
+                         {showManualAdjustmentInfo && (
+                           <motion.div 
+                              initial={{ opacity: 0, scale: 0.9, y: 10 }}
+                              animate={{ opacity: 1, scale: 1, y: 0 }}
+                              exit={{ opacity: 0, scale: 0.9, y: 10 }}
+                              className="absolute top-full right-0 mt-2 w-72 bg-zinc-900 border border-green-500 shadow-2xl shadow-green-500/20 p-4 rounded-lg z-[100] pointer-events-none"
+                           >
+                             <div className="flex items-center gap-2 mb-2">
+                               <Zap className="w-4 h-4 text-green-500" />
+                               <span className="text-[11px] font-black text-white uppercase tracking-tight">Lógica de Ajuste Automático</span>
+                             </div>
+                             <div className="space-y-3">
+                               <div className="p-2 bg-black rounded border border-zinc-800">
+                                 <p className="text-[10px] text-zinc-400 mb-1">Cálculo de Inom (Primário):</p>
+                                 <p className="text-[11px] text-green-500 font-mono font-bold">
+                                   {study.trafo_kva}kVA / ({study.trafo_v_prim/1000}kV × 1.732) = 
+                                   <span className="text-white ml-1">
+                                      {((study.trafo_kva * 1000) / (study.trafo_v_prim * 1.732)).toFixed(2)}A
+                                   </span>
+                                 </p>
+                               </div>
+                               <div className="grid grid-cols-2 gap-2">
+                                 <div className="p-2 bg-black rounded border border-zinc-800">
+                                   <p className="text-[9px] text-zinc-500 mb-1 uppercase">Pickup Fase</p>
+                                   <p className="text-[10px] text-green-400 font-bold">1.5 × Inom = {Math.ceil(((study.trafo_kva * 1000) / (study.trafo_v_prim * 1.732)) * 1.5)}A</p>
+                                 </div>
+                                 <div className="p-2 bg-black rounded border border-zinc-800">
+                                   <p className="text-[9px] text-zinc-500 mb-1 uppercase">Pickup Neutro</p>
+                                   <p className="text-[10px] text-blue-400 font-bold">20% Fase = {Math.ceil(Math.ceil(((study.trafo_kva * 1000) / (study.trafo_v_prim * 1.732)) * 1.5) * 0.2)}A</p>
+                                 </div>
+                               </div>
+                               <p className="text-[9px] text-zinc-500 leading-tight italic">
+                                 * Baseado em normas técnicas para proteção de transformadores de distribuição, garantindo margem para sobrecarga controlada e sensibilidade a faltas.
+                               </p>
+                             </div>
+                             <div className="mt-3 flex justify-end">
+                               <div className="h-1 w-full bg-zinc-800 rounded-full overflow-hidden">
+                                  <motion.div 
+                                    initial={{ width: "100%" }}
+                                    animate={{ width: "0%" }}
+                                    transition={{ duration: 8, ease: "linear" }}
+                                    className="h-full bg-green-500" 
+                                  />
+                               </div>
+                             </div>
+                           </motion.div>
+                         )}
+                       </AnimatePresence>
+                    </div>
                   </div>
+                  
+                  {study.isAutoEnabled && (
+                    <motion.div 
+                      initial={{ opacity: 0, y: -10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      className="mb-4 p-3 bg-green-950/20 border border-green-900/50 rounded-md"
+                    >
+                      <div className="flex items-start gap-2">
+                        <Info className="w-3.5 h-3.5 text-green-500 shrink-0 mt-0.5" />
+                        <p className="text-[10px] text-green-400 leading-relaxed font-mono">
+                          <span className="font-bold underline">MODO AUTOMÁTICO ATIVO:</span> Os pickups são recalculados dinamicamente sempre que a potência do trafo ou tensão primária forem alteradas.
+                          <br />
+                          <span className="text-[9px] text-zinc-500 mt-1 block italic">• Lógica: Pickup Fase = 1.5 x (S / (V x √3)) | Pickup Neutro = 20% do Fase.</span>
+                        </p>
+                      </div>
+                    </motion.div>
+                  )}
                   <div className="space-y-6">
                     <div className="grid grid-cols-2 gap-4 mb-4">
                       <div>
@@ -1289,12 +1405,16 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                              </select>
                            </div>
                            <div>
-                             <FieldInfo label="Pickup 51 (A)" description="Corrente de partida da unidade temporizada." />
+                             <div className="flex justify-between items-center mb-1">
+                               <FieldInfo label="Pickup 51 (A)" description="Corrente de partida da unidade temporizada." />
+                               {study.isAutoEnabled && <Zap className="w-3 h-3 text-yellow-500 animate-pulse" title="Ajustado Automáticamente" />}
+                             </div>
                              <input 
                                type="number" 
                                value={study.rele_fase.pickup}
+                               readOnly={study.isAutoEnabled}
                                onChange={(e) => setStudy({...study, rele_fase: {...study.rele_fase, pickup: Number(e.target.value)}})}
-                               className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 font-mono"
+                               className={`w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 font-mono ${study.isAutoEnabled ? 'opacity-70 cursor-not-allowed border-yellow-500/30' : ''}`}
                              />
                            </div>
                            <div>
@@ -1428,12 +1548,16 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                              </select>
                            </div>
                            <div>
-                             <FieldInfo label="Pickup 51N (A)" description="Sensibilidade de neutro para partida." />
+                             <div className="flex justify-between items-center mb-1">
+                               <FieldInfo label="Pickup 51N (A)" description="Sensibilidade de neutro para partida." />
+                               {study.isAutoEnabled && <Zap className="w-3 h-3 text-yellow-500 animate-pulse" title="Ajustado Automáticamente" />}
+                             </div>
                              <input 
                                type="number" 
                                value={study.rele_neutro.pickup}
+                               readOnly={study.isAutoEnabled}
                                onChange={(e) => setStudy({...study, rele_neutro: {...study.rele_neutro, pickup: Number(e.target.value)}})}
-                               className="w-full bg-black border border-zinc-800 text-blue-400 p-2 text-xs rounded outline-none focus:border-blue-500 font-mono"
+                               className={`w-full bg-black border border-zinc-800 text-blue-400 p-2 text-xs rounded outline-none focus:border-blue-500 font-mono ${study.isAutoEnabled ? 'opacity-70 cursor-not-allowed border-yellow-500/30' : ''}`}
                              />
                            </div>
                            <div>
@@ -1857,6 +1981,20 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                              </span>
                           </div>
                           <div className="text-[7px] text-zinc-700 mt-1 uppercase font-bold">Inicia processamento de seletividade</div>
+                          
+                          {simulationStatus === 'done' && (
+                             <motion.div 
+                               initial={{ opacity: 0, y: 5 }}
+                               animate={{ opacity: 1, y: 0 }}
+                               className="mt-3 pt-2 border-t border-zinc-800/50"
+                             >
+                                <p className="text-[9px] text-zinc-400 leading-tight italic">
+                                   {study.rele_fase.i_inst > 0 && study.icc_3f >= study.rele_fase.i_inst 
+                                     ? "Atuação Instantânea (50): Corrente de falta no barramento supera o pickup instantâneo. Desligamento imediato para proteção física."
+                                     : "Atuação Temporizada (51): Corrente de falta processada pela lógica de tempo inverso. Garante seletividade com a rede de montante."}
+                                </p>
+                             </motion.div>
+                          )}
                        </button>
                        <button 
                          onClick={runSimulation}
@@ -1883,6 +2021,18 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                              </span>
                           </div>
                           <div className="text-[7px] text-zinc-700 mt-1 uppercase font-bold">Verificar atuação baseada em I_nom</div>
+
+                          {simulationStatus === 'done' && (
+                             <motion.div 
+                               initial={{ opacity: 0, y: 5 }}
+                               animate={{ opacity: 1, y: 0 }}
+                               className="mt-3 pt-2 border-t border-zinc-800/50"
+                             >
+                                <p className="text-[9px] text-zinc-400 leading-tight italic">
+                                   Simulação ANSI 51: Verificação de sobrecarga térmica em regime de 150%. Garante que o relé não atue para picos normais, mas proteja contra aquecimento excessivo do transformador.
+                                </p>
+                             </motion.div>
+                          )}
                        </button>
                     </div>
                   </div>
@@ -2001,24 +2151,46 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                        )}
 
                        {simulationStatus === 'done' && (
-                         <motion.div 
-                           initial={{ opacity: 0, scale: 0.95 }}
-                           animate={{ opacity: 1, scale: 1 }}
-                           className="grid grid-cols-1 sm:grid-cols-3 gap-6 mb-6"
-                         >
-                            <div className="border-l-2 border-green-500 pl-3 py-1">
-                               <p className="text-[8px] text-zinc-500 uppercase font-bold">Coord. Fase</p>
-                               <p className="text-lg font-black text-green-400">0.42s (OK)</p>
-                            </div>
-                            <div className="border-l-2 border-green-500 pl-3 py-1">
-                               <p className="text-[8px] text-zinc-500 uppercase font-bold">Coord. Neutro</p>
-                               <p className="text-lg font-black text-green-400">0.38s (OK)</p>
-                            </div>
-                            <div className="border-l-2 border-green-500 pl-3 py-1">
-                               <p className="text-[8px] text-zinc-500 uppercase font-bold">Icc 3φ (Protegido)</p>
-                               <p className="text-lg font-black text-green-400">0.010s</p>
-                            </div>
-                         </motion.div>
+                        <div className="space-y-6">
+                           <motion.div 
+                             initial={{ opacity: 0, scale: 0.95 }}
+                             animate={{ opacity: 1, scale: 1 }}
+                             className="grid grid-cols-1 sm:grid-cols-3 gap-6"
+                           >
+                              <div className="border-l-2 border-green-500 pl-3 py-1">
+                                 <p className="text-[8px] text-zinc-500 uppercase font-bold">Coord. Fase</p>
+                                 <p className="text-lg font-black text-green-400">0.42s (OK)</p>
+                              </div>
+                              <div className="border-l-2 border-green-500 pl-3 py-1">
+                                 <p className="text-[8px] text-zinc-500 uppercase font-bold">Coord. Neutro</p>
+                                 <p className="text-lg font-black text-green-400">0.38s (OK)</p>
+                              </div>
+                              <div className="border-l-2 border-green-500 pl-3 py-1">
+                                 <p className="text-[8px] text-zinc-500 uppercase font-bold">Icc 3φ (Protegido)</p>
+                                 <p className="text-lg font-black text-green-400">0.010s</p>
+                              </div>
+                           </motion.div>
+
+                           <motion.div 
+                              initial={{ opacity: 0, y: 10 }}
+                              animate={{ opacity: 1, y: 0 }}
+                              className="p-4 bg-green-950/20 border border-green-500/30 rounded-lg"
+                           >
+                              <div className="flex gap-3">
+                                 <div className="mt-0.5">
+                                    <div className="w-8 h-8 rounded-full bg-green-500/10 border border-green-500/20 flex items-center justify-center">
+                                       <Lightbulb className="w-4 h-4 text-green-400" />
+                                    </div>
+                                 </div>
+                                 <div>
+                                    <p className="text-xs font-black text-green-400 uppercase tracking-wider mb-1">Análise Técnica do Resultado</p>
+                                    <p className="text-[11px] text-zinc-300 font-mono leading-relaxed italic">
+                                       {getSimulationResultText()}
+                                    </p>
+                                 </div>
+                              </div>
+                           </motion.div>
+                        </div>
                        )}
 
                        <div className="flex flex-col sm:flex-row gap-4">
