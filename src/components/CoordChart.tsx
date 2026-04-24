@@ -504,7 +504,7 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
   }, [curves, icc_3f, icc_1f, Inominal, specialPoints]);
 
   return (
-    <div className="bg-black border border-[#22c55e33] rounded shadow-inner p-2 overflow-hidden relative group coord-chart-container">
+    <div className="bg-black border border-[#22c55e33] rounded shadow-inner p-2 overflow-hidden relative group coord-chart-container print:bg-white print:border-black print:p-0">
       {/* Botões de Controle do Gráfico */}
       <div className="absolute top-4 left-4 flex gap-1 z-10 opacity-60 hover:opacity-100 transition-opacity no-print">
         <button onClick={zoomIn} title="Zoom In" className="p-1.5 bg-[#18181b] border border-[#27272a] text-[#22c55e] rounded hover:bg-[#22c55e] hover:text-black transition-all">
@@ -531,7 +531,7 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
         ref={svgRef} 
         width="100%" 
         height="100%"
-        className={`flex-1 min-h-[300px] sm:min-h-[600px] cursor-crosshair ${isZooming ? 'cursor-grabbing' : 'cursor-crosshair'}`} 
+        className={`flex-1 min-h-[300px] sm:min-h-[600px] cursor-crosshair print:min-h-0 print:h-auto ${isZooming ? 'cursor-grabbing' : 'cursor-crosshair'}`} 
         viewBox="0 0 800 600" 
         preserveAspectRatio="xMidYMid meet" 
       />

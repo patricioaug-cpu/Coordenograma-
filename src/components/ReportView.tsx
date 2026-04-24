@@ -235,27 +235,29 @@ Versão do Sistema: 1.1.0 PRO
           .report-table th {
             background: #e2e8f0 !important;
           }
-          /* Ajuste do Gráfico para Impressão */
-          .coord-chart-container {
-            background-color: white !important;
-            border: 2px solid #000 !important;
-            max-width: 100% !important;
-            width: 100% !important;
-            height: auto !important;
-            aspect-ratio: 4 / 3 !important;
-            padding: 0 !important;
-            margin: 0 !important;
-            box-shadow: none !important;
-            border-radius: 0 !important;
-          }
-          .coord-chart-container svg {
-            display: block !important;
-            visibility: visible !important;
-            width: 100% !important;
-            height: 100% !important;
-            min-height: 0 !important;
-            background-color: white !important;
-          }
+            /* Ajuste do Gráfico para Impressão */
+            .coord-chart-container {
+              background-color: white !important;
+              border: 2px solid #000 !important;
+              max-width: 100% !important;
+              width: 100% !important;
+              height: auto !important;
+              aspect-ratio: 4 / 3 !important;
+              padding: 0 !important;
+              margin: 0 !important;
+              box-shadow: none !important;
+              border-radius: 0 !important;
+              display: block !important;
+              visibility: visible !important;
+            }
+            .coord-chart-container svg {
+              display: block !important;
+              visibility: visible !important;
+              width: 100% !important;
+              height: 100% !important;
+              min-height: 200px !important;
+              background-color: white !important;
+            }
           .coord-chart-container .label-axis {
             fill: #000 !important;
             font-weight: bold !important;
