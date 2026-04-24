@@ -224,23 +224,47 @@ Versão do Sistema: 1.1.0 PRO
           }
           .coord-chart-container .label-axis {
             fill: #000 !important;
-            font-weight: bold !important;
+            font-weight: 900 !important;
+            font-size: 16px !important;
           }
           /* Linhas de grade e eixos do D3 no modo print */
           .coord-chart-container .grid line {
-            stroke: #ddd !important;
+            stroke: #eee !important; /* Mais clara para não competir com texto */
           }
           .coord-chart-container .axis-label {
             fill: #000 !important;
+            font-weight: bold !important;
           }
           .coord-chart-container .x-axis path, 
           .coord-chart-container .x-axis line,
           .coord-chart-container .y-axis path, 
           .coord-chart-container .y-axis line {
             stroke: #000 !important;
+            stroke-width: 1.5px !important;
           }
           .coord-chart-container .tick text {
             fill: #000 !important;
+            font-weight: bold !important;
+            font-size: 12px !important;
+          }
+          /* Garantir que fundos de labels no gráfico sejam brancos e opacos no print */
+          .coord-chart-container rect {
+            fill: white !important;
+            stroke: black !important;
+            stroke-width: 0.5px !important;
+            opacity: 1 !important;
+          }
+          /* Mas manter as barras de ICC com cores se possível, ou pelo menos bordas */
+          .coord-chart-container .icc-lines rect {
+             fill: white !important;
+             stroke-width: 1px !important;
+          }
+          .coord-chart-container .special-points text,
+          .coord-chart-container .icc-lines text,
+          .coord-chart-container .dynamic-labels text {
+            fill: black !important;
+            font-size: 12px !important;
+            font-weight: 900 !important;
           }
           .no-print {
             display: none !important;

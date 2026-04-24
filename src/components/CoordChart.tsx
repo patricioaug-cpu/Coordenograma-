@@ -211,7 +211,7 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
       .attr("x", width / 2)
       .attr("y", height + 40)
       .attr("fill", "rgba(34, 197, 94, 0.6)")
-      .attr("font-size", "10px")
+      .attr("font-size", "12px")
       .attr("font-family", "monospace")
       .attr("text-anchor", "middle")
       .attr("font-weight", "bold")
@@ -222,7 +222,7 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
       .attr("x", -height / 2)
       .attr("y", -45)
       .attr("fill", "rgba(34, 197, 94, 0.6)")
-      .attr("font-size", "10px")
+      .attr("font-size", "12px")
       .attr("font-family", "monospace")
       .attr("text-anchor", "middle")
       .attr("font-weight", "bold")
@@ -263,7 +263,7 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
               .attr("x", px)
               .attr("y", py)
               .attr("fill", curve.color)
-              .attr("font-size", "9px")
+              .attr("font-size", "11px")
               .attr("font-family", "monospace")
               .attr("text-anchor", "middle")
               .attr("font-weight", "bold")
@@ -317,19 +317,19 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
         const textStr = `${label}: ${val}A`;
         
         textGroup.append("rect")
-          .attr("x", ix - 35)
-          .attr("y", yPos - 10)
-          .attr("width", 70)
-          .attr("height", 14)
+          .attr("x", ix - 40)
+          .attr("y", yPos - 12)
+          .attr("width", 80)
+          .attr("height", 16)
           .attr("fill", "black")
-          .attr("opacity", 0.7)
+          .attr("opacity", 1)
           .attr("rx", 2);
 
         textGroup.append("text")
           .attr("x", ix)
           .attr("y", yPos)
           .attr("fill", color)
-          .attr("font-size", "9px")
+          .attr("font-size", "11px")
           .attr("font-family", "monospace")
           .attr("text-anchor", "middle")
           .attr("font-weight", "bold")
@@ -393,18 +393,18 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
         const labelG = pointsGroup.append("g");
         labelG.append("rect")
           .attr("x", lx - 2)
-          .attr("y", ly - 7)
-          .attr("width", curW)
-          .attr("height", 10)
+          .attr("y", ly - 9)
+          .attr("width", curW + 5)
+          .attr("height", 12)
           .attr("fill", "black")
-          .attr("opacity", 0.7)
+          .attr("opacity", 1)
           .attr("rx", 2);
 
         labelG.append("text")
           .attr("x", lx)
           .attr("y", ly)
           .attr("fill", "white")
-          .attr("font-size", "8px")
+          .attr("font-size", "10px")
           .attr("font-family", "monospace")
           .attr("font-weight", "bold")
           .text(p.label);
@@ -478,8 +478,8 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
       .on("mouseout", () => tooltipGroup.style("display", "none"));
 
     // Static Axis Labels
-    svg.append("text").attr("transform", `translate(${margin.left + width/2}, ${margin.top + height + 45})`).style("text-anchor", "middle").attr("fill", "#22c55e").attr("font-family", "monospace").attr("class", "label-axis").text("CORRENTE (A)");
-    svg.append("text").attr("transform", `translate(${margin.left - 50}, ${margin.top + height/2}) rotate(-90)`).style("text-anchor", "middle").attr("fill", "#22c55e").attr("font-family", "monospace").attr("class", "label-axis").text("TEMPO (s)");
+    svg.append("text").attr("transform", `translate(${margin.left + width/2}, ${margin.top + height + 45})`).style("text-anchor", "middle").attr("fill", "#22c55e").attr("font-family", "monospace").attr("class", "label-axis").style("font-size", "14px").text("CORRENTE (A)");
+    svg.append("text").attr("transform", `translate(${margin.left - 50}, ${margin.top + height/2}) rotate(-90)`).style("text-anchor", "middle").attr("fill", "#22c55e").attr("font-family", "monospace").attr("class", "label-axis").style("font-size", "14px").text("TEMPO (s)");
 
   }, [curves, icc_3f, icc_1f, Inominal, specialPoints]);
 
