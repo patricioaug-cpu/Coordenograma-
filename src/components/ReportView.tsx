@@ -216,9 +216,12 @@ Versão do Sistema: 1.1.0 PRO
           /* Ajuste do Gráfico para Impressão */
           .coord-chart-container {
             background-color: white !important;
-            border: 1.5px solid #000 !important;
+            border: 1px solid #000 !important;
             max-width: 100% !important;
-            overflow: visible !important;
+          }
+          .coord-chart-container {
+            background-color: white !important;
+            border-color: #000 !important;
           }
           .coord-chart-container svg {
             display: block !important;
@@ -229,70 +232,50 @@ Versão do Sistema: 1.1.0 PRO
           }
           .coord-chart-container .label-axis {
             fill: #000 !important;
-            font-weight: 900 !important;
-            font-size: 16px !important;
+            font-weight: bold !important;
           }
           /* Linhas de grade e eixos do D3 no modo print */
-          .coord-chart-container .x-axis line,
-          .coord-chart-container .y-axis line {
-            stroke: #ccc !important;
-            stroke-dasharray: none !important;
-            stroke-opacity: 0.5 !important;
+          .coord-chart-container .grid line {
+            stroke: #ddd !important;
           }
           .coord-chart-container .axis-label {
             fill: #000 !important;
             font-weight: bold !important;
           }
           .coord-chart-container .x-axis path, 
-          .coord-chart-container .y-axis path {
+          .coord-chart-container .x-axis line,
+          .coord-chart-container .y-axis path, 
+          .coord-chart-container .y-axis line {
             stroke: #000 !important;
-            stroke-width: 1.5px !important;
           }
           .coord-chart-container .tick text {
             fill: #000 !important;
-            font-weight: bold !important;
-            font-size: 12px !important;
           }
           /* Estilizar especificamente os fundos de labels */
           .coord-chart-container .label-bg {
             fill: white !important;
             stroke: #000 !important;
-            stroke-width: 1px !important;
+            stroke-width: 0.5px !important;
             opacity: 1 !important;
-            display: block !important;
           }
           .coord-chart-container .icc-lines rect {
-             fill: #f1f5f9 !important;
+             fill: #eee !important;
              stroke: #000 !important;
-             stroke-width: 1.5px !important;
-             opacity: 1 !important;
-             display: block !important;
-             clip-path: none !important;
+             stroke-width: 1px !important;
+             opacity: 0.8 !important;
           }
           .coord-chart-container .special-points text,
           .coord-chart-container .icc-lines text,
           .coord-chart-container .dynamic-labels text {
             fill: black !important;
-            font-weight: 900 !important;
-            font-size: 14px !important;
+            font-weight: bold !important;
           }
           /* Forçar curvas a serem mais visíveis no print */
           .coord-chart-container .curve-path {
-             stroke-width: 3.5px !important; /* Bem grossa para impressão */
-             clip-path: none !important; /* Crucial para evitar sumiço em alguns motores de impressão */
-             stroke-opacity: 1 !important;
+             stroke-width: 2.5px !important;
           }
-          .coord-chart-container rect.chart-main-bg {
-            fill: white !important;
-          }
-          .coord-chart-container [clip-path] {
-            clip-path: none !important;
-          }
-          .no-print, [class*="no-print"] {
+          .no-print {
             display: none !important;
-            height: 0 !important;
-            width: 0 !important;
-            overflow: hidden !important;
           }
           .report-portal-wrapper * {
             -webkit-print-color-adjust: exact;
@@ -592,7 +575,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
       {/* Seção 3: Coordenograma */}
       <section className="report-section page-break-before-always">
         <h3 className="report-section-title">3. Coordenograma de Proteção</h3>
-        <div className="border-2 border-black h-[650px] w-full bg-white flex items-center justify-center p-2">
+        <div className="border-2 border-black h-[600px] w-full bg-white flex items-center justify-center p-2">
            <div className="w-full h-full">
               <CoordChart 
                 curves={curves} 
@@ -807,7 +790,7 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
       {/* Seção 3: Coordenograma */}
       <section className="report-section page-break-before-always">
         <h3 className="report-section-title">3. Coordenograma de Seletividade</h3>
-        <div className="border-2 border-black h-[650px] w-full bg-white flex items-center justify-center p-2">
+        <div className="border-2 border-black h-[600px] w-full bg-white flex items-center justify-center p-2">
            <div className="w-full h-full">
               <CoordChart curves={curves} icc_3f={study.icc_3f} icc_1f={study.icc_1f} specialPoints={specialPoints} />
            </div>
