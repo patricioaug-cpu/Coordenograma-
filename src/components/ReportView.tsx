@@ -122,8 +122,12 @@ Versão do Sistema: 1.1.0 PRO
             top: 0 !important;
           }
           /* Esconde a aplicação principal e outros elementos */
-          #root, .no-print {
+          #root, .no-print, .no-print * {
             display: none !important;
+            visibility: hidden !important;
+            opacity: 0 !important;
+            height: 0 !important;
+            overflow: hidden !important;
           }
           /* Garante que o wrapper do portal seja visível */
           .report-portal-wrapper {
@@ -139,7 +143,7 @@ Versão do Sistema: 1.1.0 PRO
             margin: 0 !important;
           }
           /* Override inline styles for preview scaling during print */
-          .report-portal-wrapper div {
+          .report-portal-wrapper div:not(.no-print) {
             transform: none !important;
             margin: 0 !important;
             padding: 0 !important;
@@ -148,6 +152,10 @@ Versão do Sistema: 1.1.0 PRO
             display: block !important;
             height: auto !important;
             position: static !important;
+          }
+          /* Ensure no-print items inside the portal are actually hidden */
+          .report-portal-wrapper .no-print {
+            display: none !important;
           }
           #printable-report {
             display: block !important;
@@ -309,7 +317,7 @@ Versão do Sistema: 1.1.0 PRO
       `}</style>
       
       {/* Controls - Top */}
-      <div className="w-full bg-[#18181be6] backdrop-blur-md sticky top-0 z-[60] border-b border-[#27272a] p-4 mb-6">
+      <div className="w-full bg-[#18181be6] backdrop-blur-md sticky top-0 z-[60] border-b border-[#27272a] p-4 mb-6 no-print">
         <div className="max-w-6xl mx-auto flex flex-col sm:flex-row gap-4 justify-between items-center text-white">
           <div className="flex items-center gap-3">
              <div className="p-2 bg-[#16a34a] rounded">
