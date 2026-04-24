@@ -259,27 +259,29 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
             });
             pickupPositions.push(px);
 
-            const labelText = pickup.toFixed(0);
-            const labelW = labelText.length * 6 + 4;
+            const labelText = pickup.toFixed(1); // Slightly more precision if needed, or stick to 0
+            const labelW = labelText.length * 7 + 6;
 
             labelsGroup.append("rect")
               .attr("x", px - labelW/2)
-              .attr("y", py - 9)
+              .attr("y", py - 10)
               .attr("width", labelW)
-              .attr("height", 12)
+              .attr("height", 14)
               .attr("fill", "black")
+              .attr("stroke", "white")
+              .attr("stroke-width", "0.5px")
               .attr("opacity", 1)
-              .attr("rx", 2)
+              .attr("rx", 3)
               .attr("class", "label-bg");
 
             labelsGroup.append("text")
               .attr("x", px)
               .attr("y", py)
               .attr("fill", curve.color)
-              .attr("font-size", "9px")
+              .attr("font-size", "11px")
               .attr("font-family", "monospace")
               .attr("text-anchor", "middle")
-              .attr("font-weight", "bold")
+              .attr("font-weight", "900")
               .text(labelText);
               
             labelsGroup.append("line")
@@ -388,15 +390,15 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
         // Evitar sobreposição de rótulos de pontos especiais
         let lx = px + 8;
         let ly = py + 3;
-        const curW = p.label.length * 5 + 4;
+        const curW = p.label.length * 6 + 4;
         
         let attempts = 0;
         while (attempts < 5) {
           const overlap = pointLabels.some(label => {
-            return Math.abs(label.x - lx) < 50 && Math.abs(label.y - ly) < 12;
+            return Math.abs(label.x - lx) < 60 && Math.abs(label.y - ly) < 16;
           });
           if (overlap) {
-            ly += 12;
+            ly += 16;
             attempts++;
           } else {
             break;
@@ -406,22 +408,24 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
 
         const labelG = pointsGroup.append("g");
         labelG.append("rect")
-          .attr("x", lx - 2)
-          .attr("y", ly - 7)
+          .attr("x", lx - 3)
+          .attr("y", ly - 10)
           .attr("width", curW)
-          .attr("height", 10)
+          .attr("height", 14)
           .attr("fill", "black")
+          .attr("stroke", "white")
+          .attr("stroke-width", "0.5px")
           .attr("opacity", 1) // Full opacity to cover grid lines
-          .attr("rx", 2)
+          .attr("rx", 3)
           .attr("class", "label-bg");
 
         labelG.append("text")
           .attr("x", lx)
           .attr("y", ly)
           .attr("fill", "white")
-          .attr("font-size", "8px")
+          .attr("font-size", "10px")
           .attr("font-family", "monospace")
-          .attr("font-weight", "bold")
+          .attr("font-weight", "900")
           .text(p.label);
       });
     };
