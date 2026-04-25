@@ -1,9 +1,11 @@
 import React, { useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { CoordChart } from './CoordChart';
-import { Copy, Printer, X, FileText, Shield, Info, Zap, AlertTriangle } from 'lucide-react';
+import { Copy, Printer, X, FileText, Shield, Info, Zap, AlertTriangle, FileDown } from 'lucide-react';
 import { Concessionaria } from '../constants/concessionarias';
 import { getTechnicalSuggestions, calculateInominal, calculateInPlant, validateTC } from '../lib/protection-utils';
+import { toPng } from 'html-to-image';
+import { jsPDF } from 'jspdf';
 
 interface ReportProps {
   study: any;
@@ -16,6 +18,7 @@ interface ReportProps {
 export const ReportView: React.FC<ReportProps> = ({ study, concessionaria, onClose, curves, specialPoints }) => {
   const reportRef = useRef<HTMLDivElement>(null);
   const [previewScale, setPreviewScale] = React.useState(1);
+  const [isGeneratingPdf, setIsGeneratingPdf] = React.useState(false);
 
   React.useEffect(() => {
     const calculateScale = () => {
@@ -34,6 +37,87 @@ export const ReportView: React.FC<ReportProps> = ({ study, concessionaria, onClo
     window.addEventListener('resize', calculateScale);
     return () => window.removeEventListener('resize', calculateScale);
   }, []);
+
+  const handleExportPDF = async () => {
+    if (!reportRef.current) return;
+    
+    setIsGeneratingPdf(true);
+    
+    try {
+      // Pequeno delay para garantir que tudo está renderizado
+      await new Promise(resolve => setTimeout(resolve, 600));
+      
+      const reportElement = reportRef.current;
+      if (!reportElement) return;
+
+      const pdf = new jsPDF({
+        orientation: 'p',
+        unit: 'mm',
+        format: 'a4',
+      });
+
+      const pageWidth = pdf.internal.pageSize.getWidth();
+      const pageHeight = pdf.internal.pageSize.getHeight();
+      
+      const leftMargin = 22; // Margem esquerda ampliada
+      const rightMargin = 12; 
+      const vMargin = 15; 
+      const contentWidth = pageWidth - leftMargin - rightMargin;
+      const pageInnerHeight = pageHeight - (2 * vMargin);
+
+      // Fator de escala para garantir que o relatório longo seja capturado sem erros de memória
+      const dataUrl = await toPng(reportElement, {
+        pixelRatio: 1.5, // 1.5 é um bom equilíbrio entre qualidade e tamanho de arquivo
+        backgroundColor: '#ffffff',
+        filter: (node: any) => {
+          if (node.classList && (node.classList.contains('no-print') || node.classList.contains('report-portal-wrapper'))) {
+            return false;
+          }
+          return true;
+        },
+        style: {
+          transform: 'none',
+          margin: '0',
+          padding: '0',
+          width: `${reportElement.offsetWidth}px`, // Mantém a largura original para não distorcer
+        }
+      });
+
+      if (!dataUrl) throw new Error("Falha ao capturar imagem do relatório");
+
+      const imgProps = pdf.getImageProperties(dataUrl);
+      const contentHeight = (imgProps.height * contentWidth) / imgProps.width;
+      
+      let heightLeft = contentHeight;
+      let yOffset = 0;
+
+      while (heightLeft > 0) {
+        // Clipping region: Define onde o PDF pode desenhar nesta página
+        pdf.saveGraphicsState();
+        pdf.rect(leftMargin, vMargin, contentWidth, pageInnerHeight);
+        pdf.clip();
+
+        // Adiciona a imagem deslocada: o yOffset controla qual parte do relatório aparece
+        pdf.addImage(dataUrl, 'PNG', leftMargin, vMargin + yOffset, contentWidth, contentHeight, undefined, 'FAST');
+        
+        pdf.restoreGraphicsState();
+        
+        heightLeft -= pageInnerHeight;
+        
+        if (heightLeft > 0) {
+          pdf.addPage();
+          yOffset -= pageInnerHeight;
+        }
+      }
+
+      pdf.save(`relatorio-seletividade-${study.projeto.replace(/\s+/g, '-').toLowerCase()}.pdf`);
+    } catch (error) {
+      console.error('Erro ao gerar PDF:', error);
+      alert('Ocorreu um erro ao gerar o PDF. Tente usar a função Imprimir (Salvar como PDF) do navegador.');
+    } finally {
+      setIsGeneratingPdf(false);
+    }
+  };
 
   const handleCopyData = () => {
     const equipamentosRef = study.equipamentos.map((eq: any) => 
@@ -111,6 +195,15 @@ Versão do Sistema: 1.1.0 PRO
           margin: 0 !important;
           box-shadow: none !important;
           border-radius: 0 !important;
+          
+          /* Variáveis de Cores de Contraste para Relatório */
+          --grid-major: rgba(0, 0, 0, 0.2) !important;
+          --grid-minor: rgba(0, 0, 0, 0.05) !important;
+          --chart-text: #000 !important;
+          --chart-axis-label: #000 !important;
+          --label-bg: #fff !important;
+          --label-stroke: #000 !important;
+          --special-point-text: #000 !important;
         }
 
         .coord-chart-container svg {
@@ -119,6 +212,43 @@ Versão do Sistema: 1.1.0 PRO
           height: 100% !important;
           min-height: 0 !important;
           background-color: white !important;
+        }
+
+        .coord-chart-container svg g.x-axis text,
+        .coord-chart-container svg g.y-axis text {
+          fill: #000 !important;
+          font-weight: bold !important;
+          font-size: 10px !important;
+        }
+
+        .coord-chart-container .label-axis {
+          fill: #000 !important;
+          font-weight: bold !important;
+        }
+
+        .coord-chart-container .curve-path {
+          stroke-width: 2px !important;
+        }
+
+        /* Fix for html2canvas oklch unsupported error */
+        #printable-report, #printable-report * {
+          --color-zinc-950: #09090b !important;
+          --color-zinc-900: #18181b !important;
+          --color-zinc-800: #27272a !important;
+          --color-zinc-700: #3f3f46 !important;
+          --color-zinc-600: #52525b !important;
+          --color-zinc-500: #71717a !important;
+          --color-zinc-400: #a1a1aa !important;
+          --color-zinc-300: #d4d4d8 !important;
+          --color-zinc-200: #e4e4e7 !important;
+          --color-zinc-100: #f4f4f5 !important;
+          --color-zinc-50: #fafafa !important;
+          --color-black: #000000 !important;
+          --color-white: #ffffff !important;
+          --color-green-500: #22c55e !important;
+          --color-green-600: #16a34a !important;
+          --color-red-500: #ef4444 !important;
+          --color-amber-500: #f59e0b !important;
         }
 
         @media print {
@@ -263,18 +393,21 @@ Versão do Sistema: 1.1.0 PRO
             /* Garantir que as linhas e textos internos apareçam */
             .coord-chart-container svg g.x-axis line,
             .coord-chart-container svg g.y-axis line {
-              stroke: #ccc !important;
+              stroke: #999 !important;
               stroke-opacity: 1 !important;
+              stroke-width: 0.8px !important;
             }
             .coord-chart-container svg g.x-axis text,
             .coord-chart-container svg g.y-axis text {
               fill: #000 !important;
               stroke: none !important;
-              font-weight: bold !important;
+              font-weight: 900 !important;
+              font-size: 11px !important;
             }
             .coord-chart-container .label-axis {
               fill: #000 !important;
-              font-weight: bold !important;
+              font-weight: 900 !important;
+              font-size: 14px !important;
             }
             .coord-chart-container .label-bg {
               fill: white !important;
@@ -417,37 +550,54 @@ Versão do Sistema: 1.1.0 PRO
       `}</style>
       
       {/* Controls - Top */}
-      <div className="w-full bg-[#18181be6] backdrop-blur-md sticky top-0 z-[60] border-b border-[#27272a] p-4 mb-6 no-print">
-        <div className="max-w-6xl mx-auto flex flex-col sm:flex-row gap-4 justify-between items-center text-white">
-          <div className="flex items-center gap-3">
-             <div className="p-2 bg-[#16a34a] rounded">
-               <FileText className="w-5 h-5 text-black" />
+      <div className="w-full bg-[#18181be6] backdrop-blur-md sticky top-0 z-[60] border-b border-[#27272a] p-3 sm:p-4 no-print">
+        <div className="max-w-6xl mx-auto flex flex-col md:flex-row gap-3 md:gap-4 justify-between items-center text-white">
+          <div className="flex items-center gap-3 w-full md:w-auto">
+             <div className="p-1.5 sm:p-2 bg-[#16a34a] rounded shrink-0">
+               <FileText className="w-4 h-4 sm:w-5 sm:h-5 text-black" />
              </div>
-             <div>
-               <h2 className="text-sm font-bold uppercase tracking-tight">Relatório Técnico - Seletividade</h2>
-               <p className="text-[10px] text-[#a1a1aa] uppercase font-mono">{study.projeto}</p>
+             <div className="min-w-0 flex-1">
+               <h2 className="text-xs sm:text-sm font-bold uppercase tracking-tight truncate">Relatório Técnico</h2>
+               <p className="text-[9px] sm:text-[10px] text-[#a1a1aa] uppercase font-mono truncate">{study.projeto}</p>
+             </div>
+             <div className="md:hidden">
+                <button 
+                  onClick={onClose}
+                  className="p-1 text-[#a1a1aa] hover:text-white transition-colors"
+                >
+                  <X className="w-5 h-5" />
+                </button>
              </div>
           </div>
-          <div className="flex gap-2 sm:gap-4 w-full sm:w-auto items-center">
-            <p className="hidden lg:block text-[9px] text-[#71717a] max-w-[200px] text-right leading-tight italic">
-              A função de imprimir somente funcionará na versão web: 
-              <a href="https://coordenograma.vercel.app" target="_blank" rel="noopener noreferrer" className="text-green-500 hover:underline block font-bold">coordenograma.vercel.app</a>
-            </p>
+          <div className="grid grid-cols-3 md:flex gap-1.5 md:gap-4 w-full md:w-auto items-center">
             <button 
               onClick={handleCopyData}
-              className="whitespace-nowrap flex items-center gap-2 px-6 py-2.5 bg-[#27272a] hover:bg-[#3f3f46] text-[#fafafa] font-bold text-xs rounded border border-[#3f3f46] transition-all flex-1 sm:flex-none justify-center"
+              className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-2 py-2 sm:px-6 sm:py-2.5 bg-[#27272a] hover:bg-[#3f3f46] text-[#fafafa] font-bold text-[9px] sm:text-xs rounded border border-[#3f3f46] transition-all"
             >
-              <Copy className="w-4 h-4" /> COPIAR DADOS
+              <Copy className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> <span className="truncate">COPIAR</span>
+            </button>
+            <button 
+              onClick={handleExportPDF}
+              disabled={isGeneratingPdf}
+              className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-1 py-2 sm:px-6 sm:py-2.5 bg-[#4b5563] hover:bg-[#374151] text-white font-bold text-[9px] sm:text-xs rounded border border-[#6b7280] transition-all ${isGeneratingPdf ? 'opacity-50 cursor-not-allowed' : ''}`}
+            >
+              {isGeneratingPdf ? (
+                <span className="truncate">GERANDO...</span>
+              ) : (
+                <>
+                  <FileDown className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> <span className="truncate">PDF</span>
+                </>
+              )}
             </button>
             <button 
               onClick={() => window.print()}
-              className="whitespace-nowrap flex items-center gap-2 px-6 py-2.5 bg-[#16a34a] hover:bg-[#22c55e] text-black font-bold text-xs rounded shadow-lg shadow-[#064e3b33] transition-all flex-1 sm:flex-none justify-center"
+              className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-1 py-2 sm:px-6 sm:py-2.5 bg-[#16a34a] hover:bg-[#22c55e] text-black font-bold text-[9px] sm:text-xs rounded shadow-lg transition-all"
             >
-              <Printer className="w-4 h-4" /> IMPRIMIR
+              <Printer className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> <span className="truncate">IMPRIMIR</span>
             </button>
             <button 
               onClick={onClose}
-              className="p-2 text-[#a1a1aa] hover:text-white transition-colors"
+              className="hidden md:flex p-2 text-[#a1a1aa] hover:text-white transition-colors"
             >
               <X className="w-6 h-6" />
             </button>
@@ -481,32 +631,39 @@ Versão do Sistema: 1.1.0 PRO
       </div>
 
       {/* Final Controls - Bottom */}
-      <div className="fixed bottom-6 left-1/2 -translate-x-1/2 bg-[#18181be6] backdrop-blur-md border border-[#3f3f46] px-6 py-3 rounded-full shadow-2xl flex flex-col items-center gap-2 z-[60] no-print">
-          <div className="flex gap-6 items-center">
-            <button 
-              onClick={handleCopyData}
-              className="flex items-center gap-2 text-[#d4d4d8] hover:text-[#fafafa] text-xs font-bold uppercase transition-colors"
-            >
-              <Copy className="w-4 h-4" /> Copiar
-            </button>
-            <div className="w-px h-4 bg-[#3f3f46]"></div>
-            <button 
-              onClick={() => window.print()}
-              className="flex items-center gap-2 text-[#d4d4d8] hover:text-[#4ade80] text-xs font-bold uppercase transition-colors"
-            >
-              <Printer className="w-4 h-4" /> Imprimir
-            </button>
-            <div className="w-px h-4 bg-[#3f3f46]"></div>
-            <button 
-              onClick={onClose}
-              className="text-[#a1a1aa] hover:text-white text-xs font-bold uppercase transition-colors"
-            >
-              Fechar Relatório
-            </button>
-          </div>
-          <p className="text-[8px] text-[#71717a] italic text-center w-max">
-            Impressão/PDF via Web: <a href="https://coordenograma.vercel.app" target="_blank" rel="noopener noreferrer" className="text-green-500 font-bold hover:underline">coordenograma.vercel.app</a>
-          </p>
+      <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-[#18181be6] backdrop-blur-md border border-[#3f3f46] px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-3 sm:gap-6 z-[60] no-print max-w-[95vw]">
+          <button 
+            onClick={handleCopyData}
+            className="flex flex-col items-center gap-1 text-[#d4d4d8] hover:text-[#fafafa] transition-colors"
+          >
+            <Copy className="w-4 h-4 sm:w-4 sm:h-4" />
+            <span className="text-[8px] sm:text-[10px] font-bold uppercase">Copiar</span>
+          </button>
+          <div className="w-px h-6 bg-[#3f3f46]"></div>
+          <button 
+            onClick={handleExportPDF}
+            disabled={isGeneratingPdf}
+            className={`flex flex-col items-center gap-1 text-[#d4d4d8] hover:text-[#fafafa] transition-colors ${isGeneratingPdf ? 'opacity-50' : ''}`}
+          >
+            <FileDown className="w-4 h-4 sm:w-4 sm:h-4" />
+            <span className="text-[8px] sm:text-[10px] font-bold uppercase">{isGeneratingPdf ? '...' : 'PDF'}</span>
+          </button>
+          <div className="w-px h-6 bg-[#3f3f46]"></div>
+          <button 
+            onClick={() => window.print()}
+            className="flex flex-col items-center gap-1 text-[#d4d4d8] hover:text-[#4ade80] transition-colors"
+          >
+            <Printer className="w-4 h-4 sm:w-4 sm:h-4" />
+            <span className="text-[8px] sm:text-[10px] font-bold uppercase">Imprimir</span>
+          </button>
+          <div className="w-px h-6 bg-[#3f3f46]"></div>
+          <button 
+            onClick={onClose}
+            className="flex flex-col items-center gap-1 text-[#a1a1aa] hover:text-white transition-colors"
+          >
+            <X className="w-4 h-4 sm:w-4 sm:h-4" />
+            <span className="text-[8px] sm:text-[10px] font-bold uppercase">Sair</span>
+          </button>
       </div>
 
       {/* Spacer for bottom padding in browser view, hidden in print */}
@@ -641,6 +798,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
                 icc_3f={study.icc_3f} 
                 icc_1f={study.icc_1f} 
                 specialPoints={specialPoints} 
+                showLegend={true}
               />
            </div>
         </div>
@@ -863,7 +1021,7 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
         <h3 className="report-section-title">3. Coordenograma de Seletividade</h3>
         <div className="w-full bg-white flex items-center justify-center">
            <div className="w-full h-auto">
-              <CoordChart curves={curves} icc_3f={study.icc_3f} icc_1f={study.icc_1f} specialPoints={specialPoints} />
+              <CoordChart curves={curves} icc_3f={study.icc_3f} icc_1f={study.icc_1f} specialPoints={specialPoints} showLegend={true} />
            </div>
         </div>
         <p className="text-[7px] text-zinc-400 mt-2 uppercase text-center font-mono italic">Curvas de proteção conforme parâmetros técnicos da ND 5.3.</p>

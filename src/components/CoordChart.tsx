@@ -26,9 +26,10 @@ interface CoordChartProps {
   icc_1f?: number;
   Inominal?: number;
   specialPoints?: SpecialPoint[];
+  showLegend?: boolean;
 }
 
-export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, Inominal, specialPoints = [] }) => {
+export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, Inominal, specialPoints = [], showLegend = false }) => {
   const svgRef = useRef<SVGSVGElement>(null);
   const zoomRef = useRef<any>(null);
   const [isZooming, setIsZooming] = useState(false);
@@ -211,16 +212,28 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
       currentXScale = newXScale;
       currentYScale = newYScale;
 
+      // Ensure crisp rendering for engineering accuracy
+      mainGroup.attr("shape-rendering", "geometricPrecision");
+
       // Update Eixos
       axisXGroup.call(xAxis.scale(newXScale))
         .attr("color", "rgba(34, 197, 94, 0.4)")
         .selectAll("line")
-        .attr("stroke", (d: any) => xTicks.includes(d) && Math.log10(d) % 1 === 0 ? "rgba(34, 197, 94, 0.2)" : "rgba(34, 197, 94, 0.05)");
+        .attr("stroke", (d: any) => {
+          const l10 = Math.log10(d);
+          return Math.abs(l10 - Math.round(l10)) < 1e-10 ? "rgba(34, 197, 94, 0.2)" : "rgba(34, 197, 94, 0.05)";
+        });
       
       axisYGroup.call(yAxis.scale(newYScale))
         .attr("color", "rgba(34, 197, 94, 0.4)")
         .selectAll("line")
-        .attr("stroke", (d: any) => yTicks.includes(d) && Math.log10(d) % 1 === 0 ? "rgba(34, 197, 94, 0.2)" : "rgba(34, 197, 94, 0.05)");
+        .attr("stroke", (d: any) => {
+          const l10 = Math.log10(d);
+          return Math.abs(l10 - Math.round(l10)) < 1e-10 ? "rgba(34, 197, 94, 0.2)" : "rgba(34, 197, 94, 0.05)";
+        });
+
+      axisXGroup.selectAll("text").attr("fill", "rgba(34, 197, 94, 0.6)").attr("font-weight", "bold");
+      axisYGroup.selectAll("text").attr("fill", "rgba(34, 197, 94, 0.6)").attr("font-weight", "bold");
 
       // Update Pickups Labels
       labelsGroup.selectAll("*").remove();
@@ -286,6 +299,8 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
           .attr("fill", "none")
           .attr("stroke", curve.color)
           .attr("stroke-width", 2)
+          .attr("stroke-linecap", "round")
+          .attr("stroke-linejoin", "round")
           .attr("d", lineGenerator);
       });
 
@@ -342,7 +357,7 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
 
       // Update Special Points
       pointsGroup.selectAll("*").remove();
-      const pointLabels: {x: number, y: number}[] = [];
+      const pointLabels: {x: number, y: number, w: number, h: number}[] = [];
 
       specialPoints.forEach(p => {
         const px = newXScale(p.I);
@@ -366,35 +381,54 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
         }
 
         // Evitar sobreposição de rótulos de pontos especiais e garantir que não sejam clipados
-        let lx = px + 10;
+        let lx = px + (p.label.toLowerCase().includes('carga') ? 30 : 12);
         let ly = py + 4;
-        const curW = p.label.length * 7 + 6;
+        const curW = p.label.length * 7 + 10; // Extra padding for wider labels like "Carga"
+        const curH = 16;
         
+        // Ajuste inteligente para evitar que o rótulo saia do gráfico à direita
+        // Se for Carga, permitimos que ele fique mais próximo da borda direita antes de inverter
+        const rightEdgeLimit = p.label.toLowerCase().includes('carga') ? 5 : 10;
+        if (lx + curW > width - rightEdgeLimit) {
+          lx = px - curW - 14;
+        }
+
         let attempts = 0;
-        while (attempts < 8) {
+        while (attempts < 20) {
           const overlap = pointLabels.some(label => {
-            return Math.abs(label.x - lx) < 70 && Math.abs(label.y - ly) < 18;
+            const hOverlap = lx < label.x + label.w + 4 && lx + curW > label.x - 4;
+            const vOverlap = ly < label.y + label.h + 4 && ly + curH > label.y - 4;
+            return hOverlap && vOverlap;
           });
+          
           if (overlap) {
-            ly += 18;
+            ly += 15;
+            if (ly > height - 15) {
+              ly = 40; 
+              lx -= 20;
+            }
             attempts++;
           } else {
             break;
           }
         }
-        // Keep in bounds relative to mainGroup
-        if (ly > height - 10) ly = py - 20;
-        if (lx > width - 40) lx = px - (curW + 10);
+        
+        // Garantia final de bordas internas
+        if (ly < 20) ly = 25;
+        if (ly > height - curH - 10) ly = height - curH - 15;
+        if (lx < 10) lx = 15;
+        if (lx + curW > width - 5) lx = width - curW - 10;
 
-        pointLabels.push({x: lx, y: ly});
+        pointLabels.push({x: lx, y: ly, w: curW, h: curH});
 
         // Usamos labelsGroup (não clipado) para os rótulos de texto
         const labelG = labelsGroup.append("g");
+        
         labelG.append("rect")
           .attr("x", lx - 3)
           .attr("y", ly - 11)
           .attr("width", curW)
-          .attr("height", 16)
+          .attr("height", curH)
           .attr("fill", "black")
           .attr("stroke", "white")
           .attr("stroke-width", "0.5px")
@@ -402,13 +436,13 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
           .attr("rx", 3)
           .attr("class", "label-bg");
 
-        labelG.append("text")
+        const labelText = labelG.append("text")
           .attr("x", lx + curW/2 - 3)
           .attr("y", ly)
           .attr("fill", "white")
-          .attr("font-size", "11px")
+          .attr("font-size", "10px") // Slightly smaller font for better fit
           .attr("font-family", "monospace")
-          .attr("font-weight", "900")
+          .attr("font-weight", "bold")
           .attr("text-anchor", "middle")
           .text(p.label);
       });
@@ -488,7 +522,6 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
       .attr("font-size", "12px")
       .attr("font-weight", "bold")
       .attr("font-family", "monospace")
-      .attr("class", "label-axis")
       .text("CORRENTE (A)");
 
     svg.append("text")
@@ -498,7 +531,6 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
       .attr("font-size", "12px")
       .attr("font-weight", "bold")
       .attr("font-family", "monospace")
-      .attr("class", "label-axis")
       .text("TEMPO (s)");
 
   }, [curves, icc_3f, icc_1f, Inominal, specialPoints]);
@@ -506,24 +538,24 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
   return (
     <div className="bg-black border border-[#22c55e33] rounded shadow-inner p-2 overflow-hidden relative group coord-chart-container print:bg-white print:border-black print:p-0">
       {/* Botões de Controle do Gráfico */}
-      <div className="absolute top-4 left-4 flex gap-1 z-10 opacity-60 hover:opacity-100 transition-opacity no-print">
-        <button onClick={zoomIn} title="Zoom In" className="p-1.5 bg-[#18181b] border border-[#27272a] text-[#22c55e] rounded hover:bg-[#22c55e] hover:text-black transition-all">
-          <ZoomIn className="w-4 h-4" />
+      <div className="absolute top-4 left-4 flex gap-1 z-10 opacity-60 hover:opacity-100 transition-opacity no-print" style={{ pointerEvents: 'auto' }}>
+        <button onClick={zoomIn} title="Zoom In" className="p-1.5 bg-[#18181b] border border-[#27272a] text-[#22c55e] rounded hover:bg-[#22c55e] hover:text-black transition-all no-print">
+          <ZoomIn className="w-4 h-4 no-print" />
         </button>
-        <button onClick={zoomOut} title="Zoom Out" className="p-1.5 bg-[#18181b] border border-[#27272a] text-[#22c55e] rounded hover:bg-[#22c55e] hover:text-black transition-all">
-          <ZoomOut className="w-4 h-4" />
+        <button onClick={zoomOut} title="Zoom Out" className="p-1.5 bg-[#18181b] border border-[#27272a] text-[#22c55e] rounded hover:bg-[#22c55e] hover:text-black transition-all no-print">
+          <ZoomOut className="w-4 h-4 no-print" />
         </button>
-        <button onClick={resetZoom} title="Reset Zoom" className="p-1.5 bg-[#18181b] border border-[#27272a] text-[#22c55e] rounded hover:bg-[#22c55e] hover:text-black transition-all">
-          <Maximize2 className="w-4 h-4" />
+        <button onClick={resetZoom} title="Reset Zoom" className="p-1.5 bg-[#18181b] border border-[#27272a] text-[#22c55e] rounded hover:bg-[#22c55e] hover:text-black transition-all no-print">
+          <Maximize2 className="w-4 h-4 no-print" />
         </button>
-        <div className="mx-2 flex items-center gap-1 text-[10px] text-[#71717a] font-mono hidden sm:flex">
-          <Move className="w-3 h-3" /> ARRASTE PARA NAVEGAR
+        <div className="mx-2 flex items-center gap-1 text-[10px] text-[#71717a] font-mono hidden sm:flex no-print">
+          <Move className="w-3 h-3 no-print" /> ARRASTE PARA NAVEGAR
         </div>
       </div>
 
       <div className="absolute top-4 right-4 flex gap-2 opacity-0 group-hover:opacity-100 transition-opacity z-10 no-print">
-        <button onClick={exportPNG} title="Baixar Gráfico (Figura)" className="p-2 bg-[#18181bcc] hover:bg-[#16a34a] border border-[#27272a] text-[#a1a1aa] hover:text-black rounded transition-all">
-          <ImageIcon className="w-4 h-4" />
+        <button onClick={exportPNG} title="Baixar Gráfico (Figura)" className="p-2 bg-[#18181bcc] hover:bg-[#16a34a] border border-[#27272a] text-[#a1a1aa] hover:text-black rounded transition-all no-print">
+          <ImageIcon className="w-4 h-4 no-print" />
         </button>
       </div>
 
@@ -535,6 +567,62 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
         viewBox="0 0 800 600" 
         preserveAspectRatio="xMidYMid meet" 
       />
+
+      {/* Legenda do Gráfico (Modo Real-time / App) */}
+      {!showLegend && (
+        <div className="mt-2 grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-2 p-3 bg-[#09090b] border-t border-[#16a34a33] print:hidden no-print">
+          {curves.map((curve, idx) => (
+            <div key={idx} className="flex items-center gap-2">
+               <div className="w-3 h-0.5" style={{ backgroundColor: curve.color }}></div>
+               <span className="text-[9px] text-[#a1a1aa] font-bold uppercase truncate">{curve.label}</span>
+            </div>
+          ))}
+          <div className="flex items-center gap-2">
+             <div className="w-3 h-0.5 border-t border-dashed border-[#ef4444]"></div>
+             <span className="text-[9px] text-[#a1a1aa] font-bold uppercase truncate">Icc 3phi ({icc_3f}A)</span>
+          </div>
+          {icc_1f && (
+            <div className="flex items-center gap-2">
+              <div className="w-3 h-0.5 border-t border-dashed border-[#3b82f6]"></div>
+              <span className="text-[9px] text-[#a1a1aa] font-bold uppercase truncate">Icc 1phi ({icc_1f}A)</span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* Legenda Exclusiva para Relatório e Impressão (ShowLegend=true) */}
+      {(showLegend || true) && (
+        <div className={`${showLegend ? 'grid' : 'hidden print:grid'} grid-cols-2 sm:grid-cols-4 gap-3 p-4 bg-white border-t border-black w-full`}>
+          {curves.map((curve, idx) => (
+            <div key={idx} className="flex items-center gap-2">
+               <div className="w-5 h-1.5" style={{ backgroundColor: curve.color }}></div>
+               <span className="text-[10px] text-black font-black uppercase break-words leading-tight">{curve.label}</span>
+            </div>
+          ))}
+          <div className="flex items-center gap-2">
+             <div className="w-5 h-0.5 border-t-2 border-dashed border-[#ef4444]"></div>
+             <span className="text-[10px] text-black font-black uppercase">Icc 3phi ({icc_3f}A)</span>
+          </div>
+          {icc_1f && (
+            <div className="flex items-center gap-2">
+              <div className="w-5 h-0.5 border-t-2 border-dashed border-[#3b82f6]"></div>
+              <span className="text-[10px] text-black font-black uppercase">Icc 1phi ({icc_1f}A)</span>
+            </div>
+          )}
+          {specialPoints.some(p => p.type === 'ANSI') && (
+             <div className="flex items-center gap-2">
+               <div className="w-3 h-3 bg-[#f59e0b] border border-black"></div>
+               <span className="text-[10px] text-black font-black uppercase">Ponto ANSI</span>
+             </div>
+          )}
+          {specialPoints.some(p => p.type === 'INRUSH') && (
+             <div className="flex items-center gap-2">
+               <div className="w-3 h-3 rounded-full bg-[#ec4899] border border-black"></div>
+               <span className="text-[10px] text-black font-black uppercase">Inrush</span>
+             </div>
+          )}
+        </div>
+      )}
       
       {/* Indicador de Zoom Ativo */}
       {isZooming && (

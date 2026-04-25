@@ -333,7 +333,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     // e define o Pickup de Fase em 1.5x Inom (conforme normas usuais de proteção de transformadores)
     // O Pickup de Neutro é ajustado para 20% do Pickup de Fase.
     const Inom = (study.trafo_kva * 1000) / (study.trafo_v_prim * 1.732);
-    const pickupFase = Math.ceil(Inom * 1.5); 
+    const pickupFase = Math.ceil(Inom * 1.25); 
     const pickupNeutro = Math.ceil(pickupFase * 0.2);
     
     setStudy(prev => ({
@@ -1236,7 +1236,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                                <div className="grid grid-cols-2 gap-2">
                                  <div className="p-2 bg-black rounded border border-zinc-800">
                                    <p className="text-[9px] text-zinc-500 mb-1 uppercase">Pickup Fase</p>
-                                   <p className="text-[10px] text-green-400 font-bold">1.5 × Inom = {Math.ceil(((study.trafo_kva * 1000) / (study.trafo_v_prim * 1.732)) * 1.5)}A</p>
+                                   <p className="text-[10px] text-green-400 font-bold">1.25 × Inom = {Math.ceil(((study.trafo_kva * 1000) / (study.trafo_v_prim * 1.732)) * 1.25)}A</p>
                                  </div>
                                  <div className="p-2 bg-black rounded border border-zinc-800">
                                    <p className="text-[9px] text-zinc-500 mb-1 uppercase">Pickup Neutro</p>
@@ -1274,7 +1274,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                         <p className="text-[10px] text-green-400 leading-relaxed font-mono">
                           <span className="font-bold underline">MODO AUTOMÁTICO ATIVO:</span> Os pickups são recalculados dinamicamente sempre que a potência do trafo ou tensão primária forem alteradas.
                           <br />
-                          <span className="text-[9px] text-zinc-500 mt-1 block italic">• Lógica: Pickup Fase = 1.5 x (S / (V x √3)) | Pickup Neutro = 20% do Fase.</span>
+                          <span className="text-[9px] text-zinc-500 mt-1 block italic">• Lógica: Pickup Fase = 1.25 x (S / (V x √3)) | Pickup Neutro = 20% do Fase.</span>
                         </p>
                       </div>
                     </motion.div>

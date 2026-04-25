@@ -2,7 +2,7 @@
  * Cálculo de Curvas de Proteção (IEC / ANSI)
  */
 
-export type CurveType = 'IEC_NI' | 'IEC_VI' | 'IEC_EI' | 'IEC_LONG' | 'ANSI_VI' | 'ANSI_EI' | 'CUSTOM';
+export type CurveType = 'IEC_NI' | 'IEC_VI' | 'IEC_EI' | 'IEC_LONG' | 'ANSI_VI' | 'ANSI_EI' | 'ANSI_MI' | 'CUSTOM';
 
 export interface CurveParams {
   A: number;
@@ -15,24 +15,29 @@ export const CURVE_CONSTANTS: Record<Exclude<CurveType, 'CUSTOM'>, CurveParams> 
   IEC_VI: { A: 13.5, B: 0, P: 1 },        // Very Inverse
   IEC_EI: { A: 80, B: 0, P: 2 },          // Extremely Inverse
   IEC_LONG: { A: 120, B: 0, P: 1 },       // Long Time Inverse (Custom for utility/specific relays)
-  ANSI_VI: { A: 19.61, B: 0.491, P: 2 },  // ANSI Very Inverse (simplificado)
-  ANSI_EI: { A: 28.2, B: 0.1217, P: 2 },  // ANSI Extremely Inverse (simplificado)
+  ANSI_VI: { A: 19.61, B: 0.491, P: 2 },  // IEEE Very Inverse
+  ANSI_EI: { A: 28.2, B: 0.1217, P: 2 },  // IEEE Extremely Inverse
+  ANSI_MI: { A: 0.0515, B: 0.114, P: 0.02 }, // IEEE Moderately Inverse
 };
 
 /**
- * Calcula o tempo de atuação (t) em segundos
- * t = (A / ( (I/Ipickup)^P - 1 )) * TMS + B
+ * Calcula o tempo de atuação (t) em segundos conforme IEC 60255 ou IEEE C37.112
+ * IEC: t = TMS * (A / ( (I/Ipickup)^P - 1 ))
+ * IEEE: t = TD * ( (A / ( (I/Ipickup)^P - 1 )) + B )
  */
 export function calculateTime(I: number, Ipickup: number, TMS: number, type: CurveType, customParams?: CurveParams): number {
   const constants = type === 'CUSTOM' ? (customParams || { A: 0.14, B: 0, P: 0.02 }) : CURVE_CONSTANTS[type as keyof typeof CURVE_CONSTANTS];
   const ratio = I / Ipickup;
   
-  if (ratio <= 1.1) return 1000; // Não atua abaixo do pickup (approx)
+  if (ratio <= 1.05) return 1000; // Limite de não-atuação (pickup realístico)
   
+  const isIEEE = type.startsWith('ANSI');
   const denominator = Math.pow(ratio, constants.P) - 1;
-  const t = (constants.A / denominator) * TMS + constants.B;
+  const t = isIEEE 
+    ? TMS * (constants.A / denominator + constants.B)
+    : (constants.A / denominator) * TMS + constants.B;
   
-  return t;
+  return Math.max(0.01, t); // Tempo mínimo de processamento
 }
 
 /**
@@ -109,23 +114,28 @@ export function calculateInPlant(demanda_kw: number, v_prim: number, fp: number)
 }
 
 /**
- * Calcula Pontos ANSI para um transformador conforme IEEE C57.109
+ * Calcula Pontos ANSI para um transformador conforme IEEE C57.109 / NBR 5356
+ * Categoria I: até 500 kVA
+ * Categoria II: 501 a 1667 kVA (Mono) ou até 5000 kVA (Tri)
  */
 export function calculateANSIPoints(kva: number, v_prim: number, z_pct: number) {
   const In = calculateInominal(kva, v_prim);
-  const I_ansi = (100 / z_pct) * In;
+  const I_sc = (100 / z_pct) * In;
   
   if (kva <= 500) {
-    // Categoria I: Ponto único
+    // Categoria I: Ponto térmico único em 2s
     return [
-      { label: `${kva}kVA ANSI (Cat I)`, I: I_ansi, t: 2, type: 'ANSI' }
+      { label: `ANSI ${kva}kVA (2s)`, I: I_sc, t: 2, type: 'ANSI' },
+      { label: `Sombreamento (C57.109)`, I: In * 50, t: 0.1, type: 'ANSI' } // Aproximação da curva de carregabilidade
     ];
   } else {
-    // Categoria II: Dois pontos (Início da curva de dano)
+    // Categoria II: Curva de dano térmico e mecânico
+    // Freqüentemente usado pontos 2s, 10s e 0.1s (Limite mecânico)
     return [
-      { label: `${kva}kVA ANSI (Cat II) - 2s`, I: I_ansi, t: 2, type: 'ANSI' },
-      { label: `${kva}kVA ANSI (Cat II) - 10s`, I: I_ansi * 0.5, t: 10, type: 'ANSI' },
-      { label: `${kva}kVA ANSI Mech`, I: I_ansi, t: 0.1, type: 'ANSI' }
+      { label: `ANSI ${kva}kVA (2s)`, I: I_sc, t: 2, type: 'ANSI' },
+      { label: `ANSI (4.08s)`, I: I_sc * 0.7, t: 4.08, type: 'ANSI' },
+      { label: `ANSI (10s)`, I: I_sc * 0.45, t: 10, type: 'ANSI' },
+      { label: `Limite Mecânico`, I: I_sc * 0.8, t: 0.1, type: 'ANSI' }
     ];
   }
 }
@@ -136,8 +146,10 @@ export function calculateANSIPoints(kva: number, v_prim: number, z_pct: number) 
  */
 export function calculateInrushPoint(kva: number, v_prim: number) {
   const In = calculateInominal(kva, v_prim);
-  // Usando 10x In como média normativa segura para 100ms
-  return { label: `${kva}kVA Inrush`, I: In * 10, t: 0.1, type: 'INRUSH' };
+  // Regra prática segura: 12x In para trafos pequenos/médios, 8x para grandes em 0.1s
+  // Cemig ND 5.3 sugere 8x a 12x. Adotando 12x para garantir não atuação na energização fria.
+  const multiplier = kva <= 300 ? 12 : 10;
+  return { label: `${kva}kVA Inrush`, I: In * multiplier, t: 0.1, type: 'INRUSH' };
 }
 
 /**
@@ -195,16 +207,18 @@ export function getTechnicalSuggestions(study: any) {
   const Ip_fase = study.rele_fase.pickup;
   const Ip_neutro = study.rele_neutro.pickup;
   
-  // 1. Sensibilidade de Fase
-  if (Ip_fase > In * 1.5) {
-    suggestions.push("Ajuste de Fase (51) elevado. Sugerido reduzir para entre 1.1x e 1.3x In para melhor proteção térmica.");
-  } else if (Ip_fase < In * 1.05) {
-    suggestions.push("Ajuste de Fase (51) muito sensível. Risco de atuação indevida com flutuações de carga.");
+  // 1. Sensibilidade de Fase (Cemig ND 5.3 / CPFL GED 13)
+  const lowerLimit = In * 1.1;
+  const upperLimit = In * 1.3;
+  if (Ip_fase > upperLimit) {
+    suggestions.push(`Ajuste de Fase elevado (${(Ip_fase/In).toFixed(2)}x In). Sugerido manter entre 1.1x e 1.3x In para conformidade normativa.`);
+  } else if (Ip_fase < lowerLimit) {
+    suggestions.push("Ajuste de Fase muito sensível. Risco de atuação indevida por sobrecarga cíclica.");
   }
 
-  // 2. Sensibilidade de Neutro
-  if (Ip_neutro > In * 0.5) {
-    suggestions.push("Ajuste de Neutro (51N) pouco sensível. Recomendado reduzir para < 30% da In para detecção de faltas de alta impedância.");
+  // 2. Sensibilidade de Neutro (Proteção de Faltas de Alta Impedância)
+  if (Ip_neutro > In * 0.3) {
+    suggestions.push("Proteção de Neutro (51N) pouco sensível. Recomendado reduzir para no máximo 30% da corrente de carga para detectar faltas monopolares.");
   }
 
   // 3. Unidade Instantânea vs Magnetização
