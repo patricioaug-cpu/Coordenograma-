@@ -4,6 +4,7 @@ import {
   createUserWithEmailAndPassword, 
   onAuthStateChanged,
   signOut,
+  sendPasswordResetEmail,
   User as FirebaseUser 
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
@@ -116,6 +117,22 @@ export const LoginView = () => {
   const [password, setPassword] = useState('');
   const [nome, setNome] = useState('');
   const [error, setError] = useState('');
+  const [resetSent, setResetSent] = useState(false);
+
+  const handleForgotPassword = async () => {
+    if (!email) {
+      setError('Por favor, informe seu e-mail para recuperar a senha.');
+      return;
+    }
+    setError('');
+    setResetSent(false);
+    try {
+      await sendPasswordResetEmail(auth, email);
+      setResetSent(true);
+    } catch (err: any) {
+      setError(err.message);
+    }
+  };
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -184,6 +201,13 @@ export const LoginView = () => {
             </div>
           )}
 
+          {resetSent && (
+            <div className="flex items-center gap-2 text-green-500 text-xs font-mono bg-green-950/20 p-2 border border-green-900/50 rounded">
+              <ShieldAlert className="w-4 h-4" />
+              <span>E-mail de recuperação enviado com sucesso!</span>
+            </div>
+          )}
+
           <button 
             type="submit"
             className="w-full bg-green-600 hover:bg-green-500 text-black font-bold py-3 rounded transition-colors flex items-center justify-center gap-2 font-mono uppercase"
@@ -193,9 +217,21 @@ export const LoginView = () => {
           </button>
         </form>
 
-        <div className="mt-6 text-center">
+        <div className="mt-6 flex flex-col gap-3 text-center">
+          {isLogin && (
+            <button 
+              onClick={handleForgotPassword}
+              className="text-green-800 hover:text-green-500 text-[10px] font-mono underline transition-all uppercase tracking-tighter"
+            >
+              ESQUECEU A SENHA?
+            </button>
+          )}
           <button 
-            onClick={() => setIsLogin(!isLogin)}
+            onClick={() => {
+              setIsLogin(!isLogin);
+              setError('');
+              setResetSent(false);
+            }}
             className="text-green-700 hover:text-green-500 text-xs font-mono underline transition-all uppercase tracking-tighter"
           >
             {isLogin ? 'Não possui conta? Crie uma agora' : 'Já possui conta? Faça LOGIN'}
