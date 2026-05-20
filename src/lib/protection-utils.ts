@@ -72,30 +72,51 @@ export function generateFullRelayCurve(
   t_def?: number,
   i_inst?: number
 ) {
-  let points = generateCurvePoints(Ipickup, TMS, type, Irange, customParams);
+  const start = Math.max(Ipickup * 1.05, Irange[0]);
+  const end = Irange[1];
   
-  // Aplicar unidade de tempo definido (51/50 - 2º estágio)
-  if (i_def && t_def && i_def > 0) {
-     points = points.map(p => {
-       if (p.I >= i_def) {
-         return { ...p, t: Math.min(p.t, t_def) };
-       }
-       return p;
-     });
+  // Criar uma lista de correntes de teste
+  const currentsSet = new Set<number>();
+  
+  // Amostragem padrão logarítmica/densa
+  let cur = start;
+  while (cur <= end) {
+    currentsSet.add(cur);
+    cur *= 1.05; // Amostragem densa para curvas perfeitamente suaves
   }
-
-  // Aplicar unidade instantânea (50)
-  if (i_inst && i_inst > 0) {
-    const limitedPoints = points.filter(p => p.I < i_inst);
-    if (limitedPoints.length > 0) {
-      const last = limitedPoints[limitedPoints.length - 1];
-      // Adicionar degrau vertical
-      limitedPoints.push({ I: i_inst, t: last.t });
-      limitedPoints.push({ I: i_inst, t: 0.015 });
-      return limitedPoints;
+  
+  // Injetar pontos de transição exatos para gerar degraus verticais precisos
+  if (i_def && i_def > 0 && i_def > start && i_def < end) {
+    currentsSet.add(i_def - 0.01);
+    currentsSet.add(i_def);
+  }
+  if (i_inst && i_inst > 0 && i_inst > start && i_inst < end) {
+    currentsSet.add(i_inst - 0.01);
+    currentsSet.add(i_inst);
+  }
+  
+  // Ordenar as correntes
+  const currents = Array.from(currentsSet).sort((a, b) => a - b);
+  
+  const points: { I: number; t: number }[] = [];
+  
+  for (const I of currents) {
+    // 1. Calcular tempo inverso básico
+    let t = calculateTime(I, Ipickup, TMS, type, customParams);
+    
+    // 2. Aplicar unidade de tempo definido (51/50 - 2º estágio)
+    if (i_def && t_def && i_def > 0 && I >= i_def) {
+      t = Math.min(t, t_def);
     }
+    
+    // 3. Aplicar unidade instantânea (50)
+    if (i_inst && i_inst > 0 && I >= i_inst) {
+      t = 0.015;
+    }
+    
+    points.push({ I, t });
   }
-
+  
   return points;
 }
 

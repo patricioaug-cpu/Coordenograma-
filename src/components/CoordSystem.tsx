@@ -479,6 +479,32 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     );
   };
 
+  const t_inv_fase_at_inst = study.rele_fase.i_inst > 0
+    ? calculateTime(
+        study.rele_fase.i_inst,
+        study.rele_fase.pickup,
+        study.rele_fase.tms,
+        study.rele_fase.curva,
+        { A: study.rele_fase.A, B: study.rele_fase.B, P: study.rele_fase.P }
+      )
+    : 1000;
+  const t_fase_at_inst = study.rele_fase.i_def && study.rele_fase.i_def > 0 && study.rele_fase.i_inst >= study.rele_fase.i_def
+    ? Math.min(t_inv_fase_at_inst, study.rele_fase.t_def)
+    : t_inv_fase_at_inst;
+
+  const t_inv_neutro_at_inst = study.rele_neutro.i_inst > 0
+    ? calculateTime(
+        study.rele_neutro.i_inst,
+        study.rele_neutro.pickup,
+        study.rele_neutro.tms,
+        study.rele_neutro.curva,
+        { A: study.rele_neutro.A, B: study.rele_neutro.B, P: study.rele_neutro.P }
+      )
+    : 1000;
+  const t_neutro_at_inst = study.rele_neutro.i_def && study.rele_neutro.i_def > 0 && study.rele_neutro.i_inst >= study.rele_neutro.i_def
+    ? Math.min(t_inv_neutro_at_inst, study.rele_neutro.t_def)
+    : t_inv_neutro_at_inst;
+
   const allCurves = [
     {
       label: 'Fase (51)',
@@ -497,8 +523,10 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     {
       label: 'Fase (50)',
       points: study.rele_fase.i_inst > 0 ? [
-        { I: study.rele_fase.i_inst, t: 1000 },
-        { I: study.rele_fase.i_inst, t: 0.015 }
+        { I: study.rele_fase.i_inst - 0.01, t: t_fase_at_inst },
+        { I: study.rele_fase.i_inst, t: t_fase_at_inst },
+        { I: study.rele_fase.i_inst, t: 0.015 },
+        { I: (study.icc_3f || 5000) * 2, t: 0.015 }
       ] : [],
       color: '#4ade80'
     },
@@ -519,8 +547,10 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     {
       label: 'Neutro (50N)',
       points: study.rele_neutro.i_inst > 0 ? [
-        { I: study.rele_neutro.i_inst, t: 1000 },
-        { I: study.rele_neutro.i_inst, t: 0.015 }
+        { I: study.rele_neutro.i_inst - 0.01, t: t_neutro_at_inst },
+        { I: study.rele_neutro.i_inst, t: t_neutro_at_inst },
+        { I: study.rele_neutro.i_inst, t: 0.015 },
+        { I: (study.icc_1f || 1200) * 2, t: 0.015 }
       ] : [],
       color: '#60a5fa'
     },
