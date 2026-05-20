@@ -3,7 +3,7 @@ import { createPortal } from 'react-dom';
 import { CoordChart } from './CoordChart';
 import { Copy, Printer, X, FileText, Shield, Info, Zap, AlertTriangle, FileDown } from 'lucide-react';
 import { Concessionaria } from '../constants/concessionarias';
-import { getTechnicalSuggestions, calculateInominal, calculateInPlant, validateTC } from '../lib/protection-utils';
+import { getTechnicalSuggestions, calculateInominal, calculateInPlant, validateTC, calculateTime, calculateActualRelayTime, CURVE_CONSTANTS, CurveType } from '../lib/protection-utils';
 import { toPng } from 'html-to-image';
 import { jsPDF } from 'jspdf';
 
@@ -672,12 +672,113 @@ Versão do Sistema: 1.1.0 PRO
     document.body
   );
 };
+const getCurveParams = (curveType: string) => {
+  if (curveType === 'CUSTOM') {
+    return { name: 'Customizada', A: 0.14, B: 0, P: 0.02, isIEEE: false };
+  }
+  const isIEEE = curveType.startsWith('ANSI');
+  const constants = CURVE_CONSTANTS[curveType as Exclude<CurveType, 'CUSTOM'>];
+  return {
+    name: curveType.replace('IEC_', 'IEC ').replace('ANSI_', 'ANSI/IEEE ').replace('_', ' '),
+    A: constants?.A || 0.14,
+    B: constants?.B || 0,
+    P: constants?.P || 0.02,
+    isIEEE
+  };
+};
+
 const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) => {
   const In = (study.trafo_kva * (study.trafo_qtd || 1)) / (Math.sqrt(3) * study.trafo_v_prim / 1000);
   const tcRatioStr = study.tc_relacao || '50/5';
   const InomPlanta = calculateInPlant(study.demanda_nova, study.trafo_v_prim, study.fator_potencia);
   const tcValidation = validateTC(tcRatioStr, study.icc_3f, InomPlanta);
   const tcSaturationLevel = study.icc_3f / (parseFloat(tcRatioStr.split('/')[0]) || 1);
+
+  const tcPrimary = parseFloat(tcRatioStr.split('/')[0]) || 50;
+  const tcSecondary = parseFloat(tcRatioStr.split('/')[1]) || 5;
+  const tcRatio = tcPrimary / tcSecondary;
+  
+  const mainTrafoTotalKva = study.trafo_kva * (study.trafo_qtd || 1);
+  const v_prim_kv = study.trafo_v_prim / 1000;
+  
+  // Inrush Multiplier
+  const inrushMult = study.trafo_kva <= 300 ? 12 : 10;
+  const inrushI = In * inrushMult;
+  
+  // ANSI Short Circuit Current
+  const I_sc_ansi = (100 / study.trafo_z) * In;
+  
+  // Protection Curve Info
+  const faseCurve = getCurveParams(study.rele_fase.curva);
+  const neutroCurve = getCurveParams(study.rele_neutro.curva);
+  
+  // Fase faults trip times
+  const ipFase = study.rele_fase.pickup;
+  const tmsFase = study.rele_fase.tms;
+  const curveTypeFase = study.rele_fase.curva;
+  
+  const tripTimeFaseCurto = calculateActualRelayTime(
+    study.icc_3f,
+    ipFase,
+    tmsFase,
+    curveTypeFase,
+    undefined,
+    study.rele_fase.i_def,
+    study.rele_fase.t_def,
+    study.rele_fase.i_inst
+  );
+  
+  // Neutro faults trip times
+  const ipNeutro = study.rele_neutro.pickup;
+  const tmsNeutro = study.rele_neutro.tms;
+  const curveTypeNeutro = study.rele_neutro.curva;
+  
+  const tripTimeNeutroCurto = calculateActualRelayTime(
+    study.icc_1f,
+    ipNeutro,
+    tmsNeutro,
+    curveTypeNeutro,
+    undefined,
+    study.rele_neutro.i_def,
+    study.rele_neutro.t_def,
+    study.rele_neutro.i_inst
+  );
+
+  const getTripTimeTableFase = () => {
+    const multipliers = [1.5, 2.0, 3.0, 5.0, 10.0, 20.0];
+    return multipliers.map(m => {
+      const current = ipFase * m;
+      const time = calculateActualRelayTime(
+        current,
+        ipFase,
+        tmsFase,
+        curveTypeFase,
+        undefined,
+        study.rele_fase.i_def,
+        study.rele_fase.t_def,
+        study.rele_fase.i_inst
+      );
+      return { multiplier: m, current, time };
+    });
+  };
+
+  const getTripTimeTableNeutro = () => {
+    const multipliers = [1.5, 2.0, 3.0, 5.0, 10.0, 20.0];
+    return multipliers.map(m => {
+      const current = ipNeutro * m;
+      const time = calculateActualRelayTime(
+        current,
+        ipNeutro,
+        tmsNeutro,
+        curveTypeNeutro,
+        undefined,
+        study.rele_neutro.i_def,
+        study.rele_neutro.t_def,
+        study.rele_neutro.i_inst
+      );
+      return { multiplier: m, current, time };
+    });
+  };
 
   return (
     <div className="font-sans leading-tight">
@@ -717,38 +818,211 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
         </table>
       </section>
 
-      {/* Seção 2: Memória de Cálculo Operacional */}
+      {/* Seção 2: Memória de Cálculo Operacional Detalhada */}
       <section className="report-section">
         <h3 className="report-section-title">2. Memória de Cálculo do Sistema</h3>
-        <table className="calc-table">
-          <tbody>
-            <tr>
-              <td className="calc-box w-1/2">
-                <p className="calc-formula text-[10px]">In_Trafo = S / (V_prim * √3)</p>
-                <p>Calculado: {study.trafo_kva * (study.trafo_qtd || 1)}kVA / ({(study.trafo_v_prim/1000).toFixed(2)}kV * 1.732)</p>
-                <p className="font-bold mt-1 text-[11px]">Resultado: {In.toFixed(2)} A</p>
-              </td>
-              <td className="calc-box w-1/2">
-                <p className="calc-formula text-[10px]">In_Planta = Demanda_kW / (V_prim * √3 * FP)</p>
-                <p>Calculado: {study.demanda_nova}kW / ({(study.trafo_v_prim/1000).toFixed(2)}kV * 1.732 * {study.fator_potencia})</p>
-                <p className="font-bold mt-1 text-[11px]">Resultado: {InomPlanta.toFixed(2)} A</p>
-              </td>
-            </tr>
-            <tr className="h-4"><td></td></tr>
-            <tr>
-              <td className="calc-box w-1/2">
-                <p className="calc-formula text-[10px]">Ponto ANSI (Limite Térmico/Mecânico)</p>
-                <p>I_ansi = (100 / Z%) * In_trafo</p>
-                <p>I_ansi = (100 / {study.trafo_z}) * {In.toFixed(2)} = {(In * (100 / study.trafo_z)).toFixed(2)}A</p>
-              </td>
-              <td className="calc-box w-1/2">
-                <p className="calc-formula text-[10px]">Ponto Inrush (10x In @ 100ms)</p>
-                <p>I_inrush = 10 * {In.toFixed(2)} A</p>
-                <p className="font-bold mt-1 text-[11px]">Resultado: {(In * 10).toFixed(2)} A</p>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        
+        {/* Subsection 2.1 */}
+        <div className="mb-4">
+          <h4 className="text-[10px] font-bold text-zinc-800 uppercase mb-2 border-b border-zinc-200 pb-0.5">2.1. Dimensionamento das Correntes Nominais</h4>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50">
+              <p className="text-[8px] font-bold text-zinc-500 uppercase">Corrente Nominal dos Transformadores (In_trafo)</p>
+              <div className="text-[9px] font-mono text-zinc-800 mt-1 leading-relaxed">
+                <p className="font-bold text-zinc-900">Fórmula:</p>
+                <p>I_n_trafo = S_total / (V_prim × √3)</p>
+                <p className="font-bold text-zinc-900 mt-1.5">Aplicação:</p>
+                <p>I_n_trafo = {mainTrafoTotalKva} kVA / ({v_prim_kv.toFixed(2)} kV × 1.732)</p>
+                <p className="font-bold text-zinc-900 mt-1">Resultado: {In.toFixed(2)} A</p>
+              </div>
+            </div>
+            <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50">
+              <p className="text-[8px] font-bold text-zinc-500 uppercase">Corrente Nominal da Planta / Demanda (In_planta)</p>
+              <div className="text-[9px] font-mono text-zinc-800 mt-1 leading-relaxed">
+                <p className="font-bold text-zinc-900">Fórmula:</p>
+                <p>I_n_planta = Demanda_kW / (V_prim × √3 × FP)</p>
+                <p className="font-bold text-zinc-900 mt-1.5">Aplicação:</p>
+                <p>I_n_planta = {study.demanda_nova} kW / ({v_prim_kv.toFixed(2)} kV × 1.732 × {study.fator_potencia})</p>
+                <p className="font-bold text-zinc-900 mt-1">Resultado: {InomPlanta.toFixed(2)} A</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Subsection 2.2 */}
+        <div className="mb-4">
+          <h4 className="text-[10px] font-bold text-zinc-800 uppercase mb-2 border-b border-zinc-200 pb-0.5">2.2. Dimensionamento e Saturação do TC (Transformador de Corrente)</h4>
+          <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-[8px] font-bold text-zinc-500 uppercase">Dados do TC de Proteção</p>
+                <ul className="list-disc list-inside mt-1 font-mono text-zinc-800 space-y-0.5">
+                  <li>Relação Mínima: {study.tc_relacao} (RTC = {tcRatio.toFixed(1)})</li>
+                  <li>Classe de Exatidão: {study.tc_classe || 'Não especificada'}</li>
+                  <li>Capacidade de Carga em Regime: {tcPrimary} A &ge; {InomPlanta.toFixed(2)} A</li>
+                  <li className={tcPrimary >= InomPlanta ? "text-green-700 font-bold" : "text-red-700 font-bold"}>
+                    Status de Carga: {tcPrimary >= InomPlanta ? "CONFORME" : "SUBDIMENSIONADO"}
+                  </li>
+                </ul>
+              </div>
+              <div>
+                <p className="text-[8px] font-bold text-zinc-500 uppercase">Cálculo de Saturação (Fator Limite F_s)</p>
+                <div className="font-mono text-zinc-800 mt-1 space-y-1">
+                  <p>Fórmula: F_s = Icc_max_3f / I_tc_prim</p>
+                  <p>F_s = {study.icc_3f} A / {tcPrimary} A = {tcSaturationLevel.toFixed(2)}</p>
+                  <p className={tcSaturationLevel <= 20 ? "text-green-700 font-bold" : "text-red-700 font-bold"}>
+                    Status Saturação: {tcSaturationLevel <= 20 ? "CONFORME (F_s ≤ 20)" : "RISCO SATURAÇÃO (F_s > 20)"}
+                  </p>
+                  <p className="text-[7px] text-zinc-400 font-mono italic leading-tight">O fator F_s deve ser inferior a 20 para garantir a reprodução linear do sinal na atuação rápida (ANSI 50).</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Subsection 2.3 */}
+        <div className="mb-4">
+          <h4 className="text-[10px] font-bold text-zinc-800 uppercase mb-2 border-b border-zinc-200 pb-0.5">2.3. Pontos Singulares do Transformador (ANSI e Inrush)</h4>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed">
+              <p className="text-[8px] font-bold text-zinc-500 uppercase">Ponto de Magnetização Máxima (Inrush)</p>
+              <div className="font-mono text-zinc-800 mt-1 space-y-0.5">
+                <p className="font-bold underline">Critério Técnico:</p>
+                <p>Para S &le; 300kVA: I_inrush = 12 × I_n_trafo</p>
+                <p>Para S &gt; 300kVA: I_inrush = 10 × I_n_trafo</p>
+                <p className="font-bold mt-1">Aplicação:</p>
+                <p>I_inrush = {inrushMult} × {In.toFixed(2)} A = {inrushI.toFixed(2)} A (t = 0.1s)</p>
+                <p className="text-[7px] text-zinc-400 italic mt-0.5">O ajuste da fase temporizada e instantânea deve passar à direita deste ponto singular para evitar desligamentos indevidos durante o ligamento frio.</p>
+              </div>
+            </div>
+            <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed">
+              <p className="text-[8px] font-bold text-zinc-500 uppercase">Curva de Suportabilidade ANSI (NBR 5356)</p>
+              <div className="font-mono text-zinc-800 mt-1 space-y-0.5">
+                <p className="font-bold underline">Cálculo de Curto Terminado:</p>
+                <p>I_sc_trafo = (100 / Z%) × I_n_trafo</p>
+                <p>I_sc_trafo = (100 / {study.trafo_z}%) × {In.toFixed(2)}  A = {I_sc_ansi.toFixed(2)} A</p>
+                <p className="font-bold mt-1">Pontos de Coordenograma ANSI:</p>
+                {mainTrafoTotalKva <= 500 ? (
+                  <p>• Ponto ANSI Categoria I: {I_sc_ansi.toFixed(2)} A @ 2.0s (Térmico/Mecânico)</p>
+                ) : (
+                  <div className="space-y-0.5">
+                    <p>• Ponto ANSI 2.0s (Térmico): {I_sc_ansi.toFixed(2)} A</p>
+                    <p>• Ponto ANSI 4.08s: {(I_sc_ansi * 0.7).toFixed(2)} A</p>
+                    <p>• Ponto ANSI 10.0s (Sobrecarga): {(I_sc_ansi * 0.45).toFixed(2)} A</p>
+                    <p>• Limite Mecânico 0.1s: {(I_sc_ansi * 0.8).toFixed(2)} A</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Subsection 2.4 */}
+        <div className="mb-4">
+          <h4 className="text-[10px] font-bold text-zinc-800 uppercase mb-2 border-b border-zinc-200 pb-0.5">2.4. Cálculos do Relé de Proteção (ANSI 50/51/50D)</h4>
+          <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed mb-3">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-[8px] font-bold text-zinc-500 uppercase">Equações de Tempo Inverso</p>
+                <div className="font-mono text-zinc-800 mt-1 space-y-1">
+                  <p className="font-bold underline text-blue-800 text-[8px]">IEC 60255:</p>
+                  <p className="italic">t = TMS × [ A / ( (I / Ip)^P - 1 ) ]</p>
+                  <p className="font-bold underline text-blue-800 mt-1 text-[8px]">IEEE C37.112 (ANSI):</p>
+                  <p className="italic">t = TMS × [ A / ( (I / Ip)^P - 1 ) + B ]</p>
+                </div>
+              </div>
+              <div>
+                <p className="text-[8px] font-bold text-zinc-500 uppercase">Parâmetros das Curvas de Proteção Selecionadas</p>
+                <div className="font-mono text-zinc-800 mt-1 space-y-1">
+                  <p><strong className="text-zinc-600 block text-[7px] uppercase leading-none mt-1">Fase:</strong> {faseCurve.name} (A={faseCurve.A}, B={faseCurve.B}, P={faseCurve.P})</p>
+                  <p><strong className="text-zinc-600 block text-[7px] uppercase leading-none mt-1">Neutro:</strong> {neutroCurve.name} (A={neutroCurve.A}, B={neutroCurve.B}, P={neutroCurve.P})</p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4 mt-3 pt-3 border-t border-zinc-200/60 font-sans">
+              <div>
+                <p className="text-[8px] font-bold text-zinc-500 uppercase">Simulação de Falta Crítica de Fase (50/51/50D)</p>
+                <div className="font-mono text-zinc-800 mt-1 space-y-1 leading-snug">
+                  <p>• Corrente Curto Fase: Icc_3f = {study.icc_3f} A</p>
+                  <p>• Pickup Fase (Ip): {ipFase} A ({(ipFase / In).toFixed(2)}x In_trafo)</p>
+                  <p>• Multiplicador de Partida (M): {(study.icc_3f / ipFase).toFixed(2)}</p>
+                  <p>• Tempo do Estágio Temporizado (51): {calculateTime(study.icc_3f, ipFase, tmsFase, curveTypeFase).toFixed(3)} s</p>
+                  {study.rele_fase.i_def > 0 && study.icc_3f >= study.rele_fase.i_def && (
+                    <p>• Restrição Tempo Definido (50D): {study.rele_fase.t_def.toFixed(3)} s (I &ge; {study.rele_fase.i_def}A)</p>
+                  )}
+                  {study.rele_fase.i_inst > 0 && study.icc_3f >= study.rele_fase.i_inst && (
+                    <p>• Interceptação Instantânea (50): 0.015 s (I &ge; {study.rele_fase.i_inst}A)</p>
+                  )}
+                  <p className="font-bold underline text-zinc-900 mt-1">Tempo Total de Atuação da Unidade de Fase: {tripTimeFaseCurto.toFixed(3)} s</p>
+                </div>
+              </div>
+              
+              <div>
+                <p className="text-[8px] font-bold text-zinc-500 uppercase">Simulação de Falta Crítica de Neutro (50N/51N/50DN)</p>
+                <div className="font-mono text-zinc-800 mt-1 space-y-1 leading-snug">
+                  <p>• Corrente Curto Monofásico: Icc_1f = {study.icc_1f} A</p>
+                  <p>• Pickup Neutro (Ip): {ipNeutro} A ({(ipNeutro / In).toFixed(2)}x In_trafo)</p>
+                  <p>• Multiplicador de Partida (M): {(study.icc_1f / ipNeutro).toFixed(2)}</p>
+                  <p>• Tempo do Estágio Temporizado (51N): {calculateTime(study.icc_1f, ipNeutro, tmsNeutro, curveTypeNeutro).toFixed(3)} s</p>
+                  {study.rele_neutro.i_def > 0 && study.icc_1f >= study.rele_neutro.i_def && (
+                    <p>• Restrição Tempo Definido (50DN): {study.rele_neutro.t_def.toFixed(3)} s (I &ge; {study.rele_neutro.i_def}A)</p>
+                  )}
+                  {study.rele_neutro.i_inst > 0 && study.icc_1f >= study.rele_neutro.i_inst && (
+                    <p>• Interceptação Instantânea (50N): 0.015 s (I &ge; {study.rele_neutro.i_inst}A)</p>
+                  )}
+                  <p className="font-bold underline text-zinc-900 mt-1">Tempo Total de Atuação da Unidade de Neutro: {tripTimeNeutroCurto.toFixed(3)} s</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-[8px] font-bold text-zinc-400 uppercase mb-1">Tabela de Tempos Analíticos (FASE)</p>
+              <table className="report-table text-[9px] text-zinc-800 font-mono w-full">
+                <thead>
+                  <tr className="bg-zinc-100 text-[8px] font-sans">
+                    <th className="py-0.5 text-center px-1">Múltiplo (x Ip)</th>
+                    <th className="py-0.5 text-center px-1">Corrente (A)</th>
+                    <th className="py-0.5 text-center px-1">Tempo de Trip</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {getTripTimeTableFase().map((row, idx) => (
+                    <tr key={idx}>
+                      <td className="text-center py-0.5 px-1">{row.multiplier.toFixed(1)}x</td>
+                      <td className="text-center py-0.5 px-1">{row.current.toFixed(1)} A</td>
+                      <td className="text-center py-0.5 px-1 font-bold">{row.time >= 1000 ? 'Muito longo' : `${row.time.toFixed(3)} s`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div>
+              <p className="text-[8px] font-bold text-zinc-400 uppercase mb-1">Tabela de Tempos Analíticos (NEUTRO)</p>
+              <table className="report-table text-[9px] text-zinc-800 font-mono w-full">
+                <thead>
+                  <tr className="bg-zinc-100 text-[8px] font-sans">
+                    <th className="py-0.5 text-center px-1">Múltiplo (x Ip)</th>
+                    <th className="py-0.5 text-center px-1">Corrente (A)</th>
+                    <th className="py-0.5 text-center px-1">Tempo de Trip</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {getTripTimeTableNeutro().map((row, idx) => (
+                    <tr key={idx}>
+                      <td className="text-center py-0.5 px-1">{row.multiplier.toFixed(1)}x</td>
+                      <td className="text-center py-0.5 px-1">{row.current.toFixed(1)} A</td>
+                      <td className="text-center py-0.5 px-1 font-bold">{row.time >= 1000 ? 'Muito longo' : `${row.time.toFixed(3)} s`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* Seção 2.1: Relação de Equipamentos */}
@@ -807,7 +1081,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
 
       {/* Seção 4: Ajustes de Proteção */}
       <section className="mb-6">
-        <h3 className="report-section-title">4. Tabela de Ajustes (ANSI 50/51)</h3>
+        <h3 className="report-section-title">4. Tabela de Ajustes (ANSI 50/51/50D)</h3>
         <table className="report-table">
           <thead>
             <tr>
@@ -816,6 +1090,8 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
               <th>PICKUP (A)</th>
               <th>CURVA</th>
               <th>TMS</th>
+              <th>PARTIDA 50D (A)</th>
+              <th>TEMPO 50D (s)</th>
               <th>INST (A)</th>
               <th>REL. TC</th>
             </tr>
@@ -823,19 +1099,23 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
           <tbody>
             <tr>
               <td className="font-bold">FASE</td>
-              <td>50/51</td>
+              <td>50/51/50D</td>
               <td className="font-mono">{study.rele_fase.pickup}</td>
               <td className="uppercase">{study.rele_fase.curva.replace('_', ' ')}</td>
               <td className="font-mono">{study.rele_fase.tms}</td>
+              <td className="font-mono">{study.rele_fase.i_def || '---'}</td>
+              <td className="font-mono">{study.rele_fase.i_def > 0 ? study.rele_fase.t_def : '---'}</td>
               <td className="font-mono">{study.rele_fase.i_inst || '---'}</td>
               <td className="font-mono">{study.tc_relacao}</td>
             </tr>
             <tr>
               <td className="font-bold">NEUTRO</td>
-              <td>50/51N</td>
+              <td>50/51N/50DN</td>
               <td className="font-mono">{study.rele_neutro.pickup}</td>
               <td className="uppercase">{study.rele_neutro.curva.replace('_', ' ')}</td>
               <td className="font-mono">{study.rele_neutro.tms}</td>
+              <td className="font-mono">{study.rele_neutro.i_def || '---'}</td>
+              <td className="font-mono">{study.rele_neutro.i_def > 0 ? study.rele_neutro.t_def : '---'}</td>
               <td className="font-mono">{study.rele_neutro.i_inst || '---'}</td>
               <td className="font-mono">{study.tc_relacao}</td>
             </tr>
@@ -918,6 +1198,92 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
   const tcRatioStr = study.tc_relacao || '50/5';
   const tcSaturationLevel = study.icc_3f / (parseFloat(tcRatioStr.split('/')[0]) || 1);
 
+  const tcPrimary = parseFloat(tcRatioStr.split('/')[0]) || 50;
+  const tcSecondary = parseFloat(tcRatioStr.split('/')[1]) || 5;
+  const tcRatio = tcPrimary / tcSecondary;
+  
+  const mainTrafoTotalKva = study.trafo_kva * (study.trafo_qtd || 1);
+  const v_prim_kv = study.trafo_v_prim / 1000;
+  
+  // Inrush Multiplier
+  const inrushMult = study.trafo_kva <= 300 ? 12 : 10;
+  const inrushI = In * inrushMult;
+  
+  // ANSI Short Circuit Current
+  const I_sc_ansi = (100 / study.trafo_z) * In;
+  
+  // Protection Curve Info
+  const faseCurve = getCurveParams(study.rele_fase.curva);
+  const neutroCurve = getCurveParams(study.rele_neutro.curva);
+  
+  // Fase faults trip times
+  const ipFase = study.rele_fase.pickup;
+  const tmsFase = study.rele_fase.tms;
+  const curveTypeFase = study.rele_fase.curva;
+  
+  const tripTimeFaseCurto = calculateActualRelayTime(
+    study.icc_3f,
+    ipFase,
+    tmsFase,
+    curveTypeFase,
+    undefined,
+    study.rele_fase.i_def,
+    study.rele_fase.t_def,
+    study.rele_fase.i_inst
+  );
+  
+  // Neutro faults trip times
+  const ipNeutro = study.rele_neutro.pickup;
+  const tmsNeutro = study.rele_neutro.tms;
+  const curveTypeNeutro = study.rele_neutro.curva;
+  
+  const tripTimeNeutroCurto = calculateActualRelayTime(
+    study.icc_1f,
+    ipNeutro,
+    tmsNeutro,
+    curveTypeNeutro,
+    undefined,
+    study.rele_neutro.i_def,
+    study.rele_neutro.t_def,
+    study.rele_neutro.i_inst
+  );
+
+  const getTripTimeTableFase = () => {
+    const multipliers = [1.5, 2.0, 3.0, 5.0, 10.0, 20.0];
+    return multipliers.map(m => {
+      const current = ipFase * m;
+      const time = calculateActualRelayTime(
+        current,
+        ipFase,
+        tmsFase,
+        curveTypeFase,
+        undefined,
+        study.rele_fase.i_def,
+        study.rele_fase.t_def,
+        study.rele_fase.i_inst
+      );
+      return { multiplier: m, current, time };
+    });
+  };
+
+  const getTripTimeTableNeutro = () => {
+    const multipliers = [1.5, 2.0, 3.0, 5.0, 10.0, 20.0];
+    return multipliers.map(m => {
+      const current = ipNeutro * m;
+      const time = calculateActualRelayTime(
+        current,
+        ipNeutro,
+        tmsNeutro,
+        curveTypeNeutro,
+        undefined,
+        study.rele_neutro.i_def,
+        study.rele_neutro.t_def,
+        study.rele_neutro.i_inst
+      );
+      return { multiplier: m, current, time };
+    });
+  };
+
   return (
     <div className="text-black font-sans leading-tight">
       <div className="flex justify-between items-start border-b-2 border-black pb-4 mb-4">
@@ -951,34 +1317,211 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
         </table>
       </section>
 
-      {/* Seção 2: Memória de Cálculo e Dimensionamento */}
+      {/* Seção 2: Memória de Cálculo e Dimensionamento Detalhada */}
       <section className="report-section">
         <h3 className="report-section-title">2. Memória de Cálculo e Dimensionamento</h3>
-        <table className="calc-table">
-          <tbody>
-            <tr>
-              <td className="calc-box w-1/2">
-                 <p className="calc-formula text-[8px] uppercase">In_Trafo (Corrente Nominal Trafos)</p>
-                 <p className="text-[10px]">I = {study.trafo_kva * (study.trafo_qtd || 1)}kVA / ({(study.trafo_v_prim/1000).toFixed(2)}kV * 1.732) = {In.toFixed(2)}A</p>
-              </td>
-              <td className="calc-box w-1/2">
-                 <p className="calc-formula text-[8px] uppercase">In_Carga (Corrente Nominal Planta)</p>
-                 <p className="text-[10px]">I = {study.demanda_nova}kW / ({(study.trafo_v_prim/1000).toFixed(2)}kV * 1.732 * {study.fator_potencia}) = {InomPlant.toFixed(2)}A</p>
-              </td>
-            </tr>
-            <tr className="h-4"><td></td></tr>
-            <tr>
-              <td colSpan={2} className="calc-box">
-                 <p className="calc-formula text-[8px] uppercase">Relação de TC (Transformador de Corrente)</p>
-                 <p className="text-[10px]">RTC Escolhida: {study.tc_relacao} (Classe {study.tc_classe})</p>
-                 <p className="text-[10px]">Fator de Saturação (F): {study.icc_3f}A / {(study.tc_relacao.split('/')[0])}A = {tcSaturationLevel.toFixed(2)}x</p>
-                 <p className={tcSaturationLevel <= 20 ? 'text-green-700 font-bold text-[10px]' : 'text-red-700 font-bold text-[10px]'}>
-                    {tcSaturationLevel <= 20 ? 'STATUS: CONFORME (F < 20)' : 'STATUS: NÃO CONFORME - RISCO DE SATURAÇÃO'}
-                 </p>
-              </td>
-            </tr>
-          </tbody>
-        </table>
+        
+        {/* Subsection 2.1 */}
+        <div className="mb-4">
+          <h4 className="text-[10px] font-bold text-zinc-800 uppercase mb-2 border-b border-zinc-200 pb-0.5">2.1. Dimensionamento das Correntes Nominais</h4>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50">
+              <p className="text-[8px] font-bold text-zinc-500 uppercase">Corrente Nominal dos Transformadores (In_trafo)</p>
+              <div className="text-[9px] font-mono text-zinc-800 mt-1 leading-relaxed">
+                <p className="font-bold text-zinc-900">Fórmula:</p>
+                <p>I_n_trafo = S_total / (V_prim × √3)</p>
+                <p className="font-bold text-zinc-900 mt-1.5">Aplicação:</p>
+                <p>I_n_trafo = {mainTrafoTotalKva} kVA / ({v_prim_kv.toFixed(2)} kV × 1.732)</p>
+                <p className="font-bold text-zinc-900 mt-1">Resultado: {In.toFixed(2)} A</p>
+              </div>
+            </div>
+            <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50">
+              <p className="text-[8px] font-bold text-zinc-500 uppercase">Corrente Nominal da Planta / Demanda (In_planta)</p>
+              <div className="text-[9px] font-mono text-zinc-800 mt-1 leading-relaxed">
+                <p className="font-bold text-zinc-900">Fórmula:</p>
+                <p>I_n_planta = Demanda_kW / (V_prim × √3 × FP)</p>
+                <p className="font-bold text-zinc-900 mt-1.5">Aplicação:</p>
+                <p>I_n_planta = {study.demanda_nova} kW / ({v_prim_kv.toFixed(2)} kV × 1.732 × {study.fator_potencia})</p>
+                <p className="font-bold text-zinc-900 mt-1">Resultado: {InomPlant.toFixed(2)} A</p>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Subsection 2.2 */}
+        <div className="mb-4">
+          <h4 className="text-[10px] font-bold text-zinc-800 uppercase mb-2 border-b border-zinc-200 pb-0.5">2.2. Dimensionamento e Saturação do TC (Transformador de Corrente)</h4>
+          <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-[8px] font-bold text-zinc-500 uppercase">Dados do TC de Proteção</p>
+                <ul className="list-disc list-inside mt-1 font-mono text-zinc-800 space-y-0.5">
+                  <li>Relação Mínima: {study.tc_relacao} (RTC = {tcRatio.toFixed(1)})</li>
+                  <li>Classe de Exatidão: {study.tc_classe || 'Não especificada'}</li>
+                  <li>Capacidade de Carga em Regime: {tcPrimary} A &ge; {InomPlant.toFixed(2)} A</li>
+                  <li className={tcPrimary >= InomPlant ? "text-green-700 font-bold" : "text-red-700 font-bold"}>
+                    Status de Carga: {tcPrimary >= InomPlant ? "CONFORME" : "SUBDIMENSIONADO"}
+                  </li>
+                </ul>
+              </div>
+              <div>
+                <p className="text-[8px] font-bold text-zinc-500 uppercase">Cálculo de Saturação (Fator Limite F_s)</p>
+                <div className="font-mono text-zinc-800 mt-1 space-y-1">
+                  <p>Fórmula: F_s = Icc_max_3f / I_tc_prim</p>
+                  <p>F_s = {study.icc_3f} A / {tcPrimary} A = {tcSaturationLevel.toFixed(2)}</p>
+                  <p className={tcSaturationLevel <= 20 ? "text-green-700 font-bold" : "text-red-700 font-bold"}>
+                    Status Saturação: {tcSaturationLevel <= 20 ? "CONFORME (F_s ≤ 20)" : "RISCO SATURAÇÃO (F_s > 20)"}
+                  </p>
+                  <p className="text-[7px] text-zinc-400 font-mono italic leading-tight">O fator F_s deve ser inferior a 20 para garantir a reprodução linear do sinal na atuação rápida (ANSI 50).</p>
+                </div>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Subsection 2.3 */}
+        <div className="mb-4">
+          <h4 className="text-[10px] font-bold text-zinc-800 uppercase mb-2 border-b border-zinc-200 pb-0.5">2.3. Pontos Singulares do Transformador (ANSI e Inrush)</h4>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed">
+              <p className="text-[8px] font-bold text-zinc-500 uppercase">Ponto de Magnetização Máxima (Inrush)</p>
+              <div className="font-mono text-zinc-800 mt-1 space-y-0.5">
+                <p className="font-bold underline">Critério Técnico:</p>
+                <p>Para S &le; 300kVA: I_inrush = 12 × I_n_trafo</p>
+                <p>Para S &gt; 300kVA: I_inrush = 10 × I_n_trafo</p>
+                <p className="font-bold mt-1">Aplicação:</p>
+                <p>I_inrush = {inrushMult} × {In.toFixed(2)} A = {inrushI.toFixed(2)} A (t = 0.1s)</p>
+                <p className="text-[7px] text-zinc-400 italic mt-0.5">O ajuste da fase temporizada e instantânea deve passar à direita deste ponto singular para evitar desligamentos indevidos durante o ligamento frio.</p>
+              </div>
+            </div>
+            <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed">
+              <p className="text-[8px] font-bold text-zinc-500 uppercase">Curva de Suportabilidade ANSI (NBR 5356)</p>
+              <div className="font-mono text-zinc-800 mt-1 space-y-0.5">
+                <p className="font-bold underline">Cálculo de Curto Terminado:</p>
+                <p>I_sc_trafo = (100 / Z%) × I_n_trafo</p>
+                <p>I_sc_trafo = (100 / {study.trafo_z}%) × {In.toFixed(2)}  A = {I_sc_ansi.toFixed(2)} A</p>
+                <p className="font-bold mt-1">Pontos de Coordenograma ANSI:</p>
+                {mainTrafoTotalKva <= 500 ? (
+                  <p>• Ponto ANSI Categoria I: {I_sc_ansi.toFixed(2)} A @ 2.0s (Térmico/Mecânico)</p>
+                ) : (
+                  <div className="space-y-0.5">
+                    <p>• Ponto ANSI 2.0s (Térmico): {I_sc_ansi.toFixed(2)} A</p>
+                    <p>• Ponto ANSI 4.08s: {(I_sc_ansi * 0.7).toFixed(2)} A</p>
+                    <p>• Ponto ANSI 10.0s (Sobrecarga): {(I_sc_ansi * 0.45).toFixed(2)} A</p>
+                    <p>• Limite Mecânico 0.1s: {(I_sc_ansi * 0.8).toFixed(2)} A</p>
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+
+        {/* Subsection 2.4 */}
+        <div className="mb-4">
+          <h4 className="text-[10px] font-bold text-zinc-800 uppercase mb-2 border-b border-zinc-200 pb-0.5">2.4. Cálculos do Relé de Proteção (ANSI 50/51/50D)</h4>
+          <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed mb-3">
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <p className="text-[8px] font-bold text-zinc-500 uppercase">Equações de Tempo Inverso / ND 5.3</p>
+                <div className="font-mono text-zinc-800 mt-1 space-y-1">
+                  <p className="font-bold underline text-blue-800 text-[8px]">IEC 60255:</p>
+                  <p className="italic">t = TMS × [ A / ( (I / Ip)^P - 1 ) ]</p>
+                  <p className="font-bold underline text-blue-800 mt-1 text-[8px]">IEEE C37.112 (ANSI):</p>
+                  <p className="italic">t = TMS × [ A / ( (I / Ip)^P - 1 ) + B ]</p>
+                </div>
+              </div>
+              <div>
+                <p className="text-[8px] font-bold text-zinc-500 uppercase">Parâmetros das Curvas de Proteção Selecionadas</p>
+                <div className="font-mono text-zinc-800 mt-1 space-y-1">
+                  <p><strong className="text-zinc-600 block text-[7px] uppercase leading-none mt-1">Fase:</strong> {faseCurve.name} (A={faseCurve.A}, B={faseCurve.B}, P={faseCurve.P})</p>
+                  <p><strong className="text-zinc-600 block text-[7px] uppercase leading-none mt-1">Neutro:</strong> {neutroCurve.name} (A={neutroCurve.A}, B={neutroCurve.B}, P={neutroCurve.P})</p>
+                </div>
+              </div>
+            </div>
+            
+            <div className="grid grid-cols-2 gap-4 mt-3 pt-3 border-t border-zinc-200/60 font-sans">
+              <div>
+                <p className="text-[8px] font-bold text-zinc-500 uppercase">Simulação de Falta Crítica de Fase (50/51/50D)</p>
+                <div className="font-mono text-zinc-800 mt-1 space-y-1 leading-snug">
+                  <p>• Corrente Curto Fase: Icc_3f = {study.icc_3f} A</p>
+                  <p>• Pickup Fase (Ip): {ipFase} A ({(ipFase / In).toFixed(2)}x In_trafo)</p>
+                  <p>• Multiplicador de Partida (M): {(study.icc_3f / ipFase).toFixed(2)}</p>
+                  <p>• Tempo do Estágio Temporizado (51): {calculateTime(study.icc_3f, ipFase, tmsFase, curveTypeFase).toFixed(3)} s</p>
+                  {study.rele_fase.i_def > 0 && study.icc_3f >= study.rele_fase.i_def && (
+                    <p>• Restrição Tempo Definido (50D): {study.rele_fase.t_def.toFixed(3)} s (I &ge; {study.rele_fase.i_def}A)</p>
+                  )}
+                  {study.rele_fase.i_inst > 0 && study.icc_3f >= study.rele_fase.i_inst && (
+                    <p>• Interceptação Instantânea (50): 0.015 s (I &ge; {study.rele_fase.i_inst}A)</p>
+                  )}
+                  <p className="font-bold underline text-zinc-900 mt-1">Tempo Total de Atuação da Unidade de Fase: {tripTimeFaseCurto.toFixed(3)} s</p>
+                </div>
+              </div>
+              
+              <div>
+                <p className="text-[8px] font-bold text-zinc-500 uppercase">Simulação de Falta Crítica de Neutro (50N/51N/50DN)</p>
+                <div className="font-mono text-zinc-800 mt-1 space-y-1 leading-snug">
+                  <p>• Corrente Curto Monofásico: Icc_1f = {study.icc_1f} A</p>
+                  <p>• Pickup Neutro (Ip): {ipNeutro} A ({(ipNeutro / In).toFixed(2)}x In_trafo)</p>
+                  <p>• Multiplicador de Partida (M): {(study.icc_1f / ipNeutro).toFixed(2)}</p>
+                  <p>• Tempo do Estágio Temporizado (51N): {calculateTime(study.icc_1f, ipNeutro, tmsNeutro, curveTypeNeutro).toFixed(3)} s</p>
+                  {study.rele_neutro.i_def > 0 && study.icc_1f >= study.rele_neutro.i_def && (
+                    <p>• Restrição Tempo Definido (50DN): {study.rele_neutro.t_def.toFixed(3)} s (I &ge; {study.rele_neutro.i_def}A)</p>
+                  )}
+                  {study.rele_neutro.i_inst > 0 && study.icc_1f >= study.rele_neutro.i_inst && (
+                    <p>• Interceptação Instantânea (50N): 0.015 s (I &ge; {study.rele_neutro.i_inst}A)</p>
+                  )}
+                  <p className="font-bold underline text-zinc-900 mt-1">Tempo Total de Atuação da Unidade de Neutro: {tripTimeNeutroCurto.toFixed(3)} s</p>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-2 gap-4">
+            <div>
+              <p className="text-[8px] font-bold text-zinc-400 uppercase mb-1">Tabela de Tempos Analíticos (FASE)</p>
+              <table className="report-table text-[9px] text-zinc-800 font-mono w-full">
+                <thead>
+                  <tr className="bg-zinc-100 text-[8px] font-sans">
+                    <th className="py-0.5 text-center px-1">Múltiplo (x Ip)</th>
+                    <th className="py-0.5 text-center px-1">Corrente (A)</th>
+                    <th className="py-0.5 text-center px-1">Tempo de Trip</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {getTripTimeTableFase().map((row, idx) => (
+                    <tr key={idx}>
+                      <td className="text-center py-0.5 px-1">{row.multiplier.toFixed(1)}x</td>
+                      <td className="text-center py-0.5 px-1">{row.current.toFixed(1)} A</td>
+                      <td className="text-center py-0.5 px-1 font-bold">{row.time >= 1000 ? 'Muito longo' : `${row.time.toFixed(3)} s`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+
+            <div>
+              <p className="text-[8px] font-bold text-zinc-400 uppercase mb-1">Tabela de Tempos Analíticos (NEUTRO)</p>
+              <table className="report-table text-[9px] text-zinc-800 font-mono w-full">
+                <thead>
+                  <tr className="bg-zinc-100 text-[8px] font-sans">
+                    <th className="py-0.5 text-center px-1">Múltiplo (x Ip)</th>
+                    <th className="py-0.5 text-center px-1">Corrente (A)</th>
+                    <th className="py-0.5 text-center px-1">Tempo de Trip</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {getTripTimeTableNeutro().map((row, idx) => (
+                    <tr key={idx}>
+                      <td className="text-center py-0.5 px-1">{row.multiplier.toFixed(1)}x</td>
+                      <td className="text-center py-0.5 px-1">{row.current.toFixed(1)} A</td>
+                      <td className="text-center py-0.5 px-1 font-bold">{row.time >= 1000 ? 'Muito longo' : `${row.time.toFixed(3)} s`}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </div>
       </section>
 
       {/* Relação de Equipamentos */}
@@ -1028,13 +1571,13 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
       </section>
 
       <section className="mb-4">
-        <h3 className="report-section-title">4. Ajustes do Relé de Proteção (ANSI 50/51)</h3>
+        <h3 className="report-section-title">4. Ajustes do Relé de Proteção (ANSI 50/51/50D)</h3>
         <table className="report-table">
           <thead>
             <tr>
               <th>PARÂMETRO</th>
-              <th>FASE (51/50)</th>
-              <th>NEUTRO (51/50N)</th>
+              <th>FASE (51/50/50D)</th>
+              <th>NEUTRO (51/50N/50DN)</th>
             </tr>
           </thead>
           <tbody>
@@ -1052,6 +1595,16 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
               <td className="font-bold uppercase text-[7px]">Curva</td>
               <td className="uppercase">{study.rele_fase.curva}</td>
               <td className="uppercase">{study.rele_neutro.curva}</td>
+            </tr>
+            <tr>
+              <td className="font-bold uppercase text-[7px]">Partida 50D (A)</td>
+              <td className="font-mono">{study.rele_fase.i_def || '---'}</td>
+              <td className="font-mono">{study.rele_neutro.i_def || '---'}</td>
+            </tr>
+            <tr>
+              <td className="font-bold uppercase text-[7px]">Tempo 50D (s)</td>
+              <td className="font-mono">{study.rele_fase.i_def > 0 ? study.rele_fase.t_def : '---'}</td>
+              <td className="font-mono">{study.rele_neutro.i_def > 0 ? study.rele_neutro.t_def : '---'}</td>
             </tr>
             <tr>
                <td className="font-bold uppercase text-[7px]">Instantâneo (A)</td>
