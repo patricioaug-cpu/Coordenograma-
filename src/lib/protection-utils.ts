@@ -91,7 +91,7 @@ export function generateFullRelayCurve(
       const last = limitedPoints[limitedPoints.length - 1];
       // Adicionar degrau vertical
       limitedPoints.push({ I: i_inst, t: last.t });
-      limitedPoints.push({ I: i_inst, t: 0.01 });
+      limitedPoints.push({ I: i_inst, t: 0.015 });
       return limitedPoints;
     }
   }
@@ -180,7 +180,7 @@ export function validateTC(tc_relacao: string, icc_3f: number, inom_planta: numb
     const ideal_primary = Math.ceil(icc_3f / 20 / 5) * 5; // Arredonda para múltiplo de 5
     return {
       ok: false,
-      msg: `Risco de Saturação! A corrente de CC (${icc_3f}A) é ${factor.toFixed(1)}x a nominal do TC.`,
+      msg: `Risco de Saturação! A corrente de CC (${icc_3f}A) é ${factor.toFixed(2)}x a nominal do TC.`,
       sugestao: `${ideal_primary}/5`
     };
   }
@@ -190,7 +190,7 @@ export function validateTC(tc_relacao: string, icc_3f: number, inom_planta: numb
      const ideal_primary = Math.ceil(inom_planta / 5) * 5;
      return {
        ok: false,
-       msg: `Subdimensionado! A corrente da planta (${inom_planta.toFixed(1)}A) supera o TC (${rtc_primary}A).`,
+       msg: `Subdimensionado! A corrente da planta (${inom_planta.toFixed(2)}A) supera o TC (${rtc_primary}A).`,
        sugestao: `${ideal_primary}/5`
      };
   }
@@ -203,7 +203,7 @@ export function validateTC(tc_relacao: string, icc_3f: number, inom_planta: numb
  */
 export function getTechnicalSuggestions(study: any) {
   const suggestions: string[] = [];
-  const In = calculateInominal(study.trafo_kva, study.trafo_v_prim);
+  const In = calculateInominal(study.trafo_kva * (study.trafo_qtd || 1), study.trafo_v_prim);
   const Ip_fase = study.rele_fase.pickup;
   const Ip_neutro = study.rele_neutro.pickup;
   
@@ -224,7 +224,7 @@ export function getTechnicalSuggestions(study: any) {
   // 3. Unidade Instantânea vs Magnetização
   const inrush = In * 10;
   if (study.rele_fase.i_inst && study.rele_fase.i_inst > 0 && study.rele_fase.i_inst < inrush) {
-    suggestions.push(`Unidade Instantânea (50) abaixo do Inrush estimado de ${inrush.toFixed(1)}A. Risco iminente de queda do disjuntor na energização.`);
+    suggestions.push(`Unidade Instantânea (50) abaixo do Inrush estimado de ${inrush.toFixed(2)}A. Risco iminente de queda do disjuntor na energização.`);
   }
 
   // 4. Proteção de Tensão (ANSI 27/59)
@@ -271,3 +271,34 @@ export function getTechnicalSuggestions(study: any) {
 
   return suggestions;
 }
+
+/**
+ * Calcula o tempo real de atuação considerando os estágios temporizado (51), tempo definido (51/50 DT) e instantâneo (50)
+ */
+export function calculateActualRelayTime(
+  I: number,
+  Ipickup: number,
+  TMS: number,
+  type: CurveType,
+  customParams?: CurveParams,
+  i_def?: number,
+  t_def?: number,
+  i_inst?: number
+): number {
+  // Se houver unidade instantânea habilitada e a corrente superá-la
+  if (i_inst && i_inst > 0 && I >= i_inst) {
+    return 0.015; // 15ms
+  }
+
+  // Se houver unidade de tempo definido habilitada e a corrente superá-la
+  if (i_def && i_def > 0 && I >= i_def) {
+    const t_inv = calculateTime(I, Ipickup, TMS, type, customParams);
+    if (t_def && t_def > 0) {
+      return Math.min(t_inv, t_def);
+    }
+  }
+
+  // Apenas a unidade temporizada (51)
+  return calculateTime(I, Ipickup, TMS, type, customParams);
+}
+

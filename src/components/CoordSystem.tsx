@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { CONCESSIONARIAS, Concessionaria } from '../constants/concessionarias';
 import { COMMONLY_USED_RELAYS } from '../constants/relays';
-import { generateFullRelayCurve, CurveType, calculateInominal, calculateANSIPoints, calculateInrushPoint, calculateMotorInrush, calculateInPlant, CURVE_CONSTANTS, getTechnicalSuggestions, calculateTime, validateTC } from '../lib/protection-utils';
+import { generateFullRelayCurve, CurveType, calculateInominal, calculateANSIPoints, calculateInrushPoint, calculateMotorInrush, calculateInPlant, CURVE_CONSTANTS, getTechnicalSuggestions, calculateTime, validateTC, calculateActualRelayTime } from '../lib/protection-utils';
 import { CoordChart, SpecialPoint } from './CoordChart';
 import { auth, db, handleFirestoreError } from '../lib/firebase';
 import { signOut } from 'firebase/auth';
@@ -37,6 +37,7 @@ interface StudyData {
   observacoes: string;
   concessionariaId: string;
   trafo_kva: number; 
+  trafo_qtd: number;
   trafo_v_prim: number;
   trafo_v_sec: number;
   trafo_z: number;
@@ -101,6 +102,7 @@ const DEFAULT_STUDY: StudyData = {
   observacoes: '',
   concessionariaId: 'enel_sp',
   trafo_kva: 500,
+  trafo_qtd: 1,
   trafo_v_prim: 13800,
   trafo_v_sec: 220,
   trafo_z: 5,
@@ -188,12 +190,12 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
   };
 
   const [simulationStatus, setSimulationStatus] = useState<'idle' | 'running' | 'done'>('idle');
-  const [simulationType, setSimulationType] = useState<'3phase' | 'overload' | null>(null);
+  const [simulationType, setSimulationType] = useState<'3phase' | 'overload' | '1phase' | null>(null);
   const [simulationProgress, setSimulationProgress] = useState(0);
 
   const simulationIntervalRef = React.useRef<NodeJS.Timeout | null>(null);
 
-  const runSimulation = (type: '3phase' | 'overload') => {
+  const runSimulation = (type: '3phase' | 'overload' | '1phase') => {
     // Clear any existing simulation interval
     if (simulationIntervalRef.current) {
       clearInterval(simulationIntervalRef.current);
@@ -224,7 +226,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
   };
 
   const getSimulationResultText = () => {
-    const In = calculateInominal(study.trafo_kva, study.trafo_v_prim);
+    const In = calculateInominal(study.trafo_kva * (study.trafo_qtd || 1), study.trafo_v_prim);
     const Ip = study.rele_fase.pickup;
     const suggestions = getTechnicalSuggestions(study);
     const alertsCount = alerts.length;
@@ -234,14 +236,49 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     }
     
     if (simulationType === 'overload') {
-      const overloadTime = calculateTime(In * 1.5, study.rele_fase.pickup, study.rele_fase.tms, study.rele_fase.curva);
-      return `RESULTADO DA SOBRECARGA (1.5x In): O relé atuará em aproximadamente ${overloadTime.toFixed(1)} segundos. Este tempo garante a proteção térmica do transformador contra aquecimento excessivo sem causar desligamentos por picos transitórios de carga.`;
+      const overloadTime = calculateActualRelayTime(
+        In * 1.5,
+        study.rele_fase.pickup,
+        study.rele_fase.tms,
+        study.rele_fase.curva,
+        { A: study.rele_fase.A, B: study.rele_fase.B, P: study.rele_fase.P },
+        study.rele_fase.i_def,
+        study.rele_fase.t_def,
+        study.rele_fase.i_inst
+      );
+      return `RESULTADO DA SOBRECARGA (1.5x In): O relé atuará em aproximadamente ${overloadTime.toFixed(2)} segundos. Este tempo garante a proteção térmica do transformador contra aquecimento excessivo sem causar desligamentos por picos transitórios de carga.`;
     }
 
     if (simulationType === '3phase') {
-      const instTime = study.rele_fase.i_inst > 0 && study.icc_3f >= study.rele_fase.i_inst ? 0.010 : calculateTime(study.icc_3f, study.rele_fase.pickup, study.rele_fase.tms, study.rele_fase.curva);
+      const instTime = calculateActualRelayTime(
+        study.icc_3f,
+        study.rele_fase.pickup,
+        study.rele_fase.tms,
+        study.rele_fase.curva,
+        { A: study.rele_fase.A, B: study.rele_fase.B, P: study.rele_fase.P },
+        study.rele_fase.i_def,
+        study.rele_fase.t_def,
+        study.rele_fase.i_inst
+      );
       const isInst = study.rele_fase.i_inst > 0 && study.icc_3f >= study.rele_fase.i_inst;
-      return `RESULTADO DO CURTO-CIRCUITO TRIFÁSICO (${study.icc_3f}A): Proteção via unidade ${isInst ? 'INSTANTÂNEA (50)' : 'TEMPORIZADA (51)'}. Tempo de atuação: ${instTime.toFixed(3)}s. Coordenação preservada com os pontos ANSI e magnetização do transformador.`;
+      const isDef = !isInst && study.rele_fase.i_def > 0 && study.icc_3f >= study.rele_fase.i_def;
+      return `RESULTADO DO CURTO-CIRCUITO TRIFÁSICO (${study.icc_3f}A): Proteção via unidade ${isInst ? 'INSTANTÂNEA (50)' : isDef ? 'TEMPO DEFINIDO (50DF)' : 'TEMPORIZADA (51)'}. Tempo de atuação: ${instTime.toFixed(3)}s. Coordenação preservada com os pontos ANSI e magnetização do transformador.`;
+    }
+
+    if (simulationType === '1phase') {
+      const faultTime = calculateActualRelayTime(
+        study.icc_1f,
+        study.rele_neutro.pickup,
+        study.rele_neutro.tms,
+        study.rele_neutro.curva,
+        { A: study.rele_neutro.A, B: study.rele_neutro.B, P: study.rele_neutro.P },
+        study.rele_neutro.i_def,
+        study.rele_neutro.t_def,
+        study.rele_neutro.i_inst
+      );
+      const isInst = study.rele_neutro.i_inst > 0 && study.icc_1f >= study.rele_neutro.i_inst;
+      const isDef = !isInst && study.rele_neutro.i_def > 0 && study.icc_1f >= study.rele_neutro.i_def;
+      return `RESULTADO DO CURTO-CIRCUITO MONOFÁSICO DE NEUTRO (${study.icc_1f}A): Proteção via unidade ${isInst ? 'INSTANTÂNEA (50N)' : isDef ? 'TEMPO DEFINIDO (50DN)' : 'TEMPORIZADA DE NEUTRO (51N)'}. Tempo de atuação: ${faultTime.toFixed(3)}s. Esta intersecção assegura o desligamento ágil de faltas monopolares à terra e a integridade do condutor de neutro.`;
     }
 
     return "SIMULAÇÃO CONCLUÍDA. Parâmetros técnicos dentro das margens normativas.";
@@ -322,24 +359,48 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
   };
 
   useEffect(() => {
+    const totalKva = study.trafo_kva * (study.trafo_qtd || 1);
+    const Inom = (totalKva * 1000) / (study.trafo_v_prim * 1.732);
+    const calculated_i_inst_fase = Number((Inom * 12.5).toFixed(2));
+    const calculated_i_inst_neutro = Number((Inom * 4.0).toFixed(2));
+
+    if (study.rele_fase.i_inst !== calculated_i_inst_fase || study.rele_neutro.i_inst !== calculated_i_inst_neutro) {
+      setStudy(prev => ({
+        ...prev,
+        rele_fase: {
+          ...prev.rele_fase,
+          i_inst: calculated_i_inst_fase
+        },
+        rele_neutro: {
+          ...prev.rele_neutro,
+          i_inst: calculated_i_inst_neutro
+        }
+      }));
+    }
+  }, [study.trafo_kva, study.trafo_v_prim, study.trafo_qtd]);
+
+  useEffect(() => {
     if (study.isAutoEnabled) {
       autoAdjust();
     }
-  }, [study.trafo_kva, study.trafo_v_prim, study.isAutoEnabled]);
+  }, [study.trafo_kva, study.trafo_v_prim, study.trafo_qtd, study.isAutoEnabled]);
 
   const autoAdjust = () => {
     // Ip = S / (V * sqrt(3)) * K
     // O ajuste automático calcula a corrente nominal do transformador
-    // e define o Pickup de Fase em 1.5x Inom (conforme normas usuais de proteção de transformadores)
+    // e define o Pickup de Fase em 1.25x Inom (conforme normas usuais de proteção de transformadores)
     // O Pickup de Neutro é ajustado para 20% do Pickup de Fase.
-    const Inom = (study.trafo_kva * 1000) / (study.trafo_v_prim * 1.732);
+    const totalKva = study.trafo_kva * (study.trafo_qtd || 1);
+    const Inom = (totalKva * 1000) / (study.trafo_v_prim * 1.732);
     const pickupFase = Math.ceil(Inom * 1.25); 
     const pickupNeutro = Math.ceil(pickupFase * 0.2);
+    const instFase = Number((Inom * 12.5).toFixed(2));
+    const instNeutro = Number((Inom * 4.0).toFixed(2));
     
     setStudy(prev => ({
       ...prev,
-      rele_fase: { ...prev.rele_fase, pickup: pickupFase },
-      rele_neutro: { ...prev.rele_neutro, pickup: pickupNeutro }
+      rele_fase: { ...prev.rele_fase, pickup: pickupFase, i_inst: instFase },
+      rele_neutro: { ...prev.rele_neutro, pickup: pickupNeutro, i_inst: instNeutro }
     }));
 
     // Acionar a explicação visual
@@ -381,15 +442,16 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     if (!study.proprietario) newAlerts.push("Falta o nome do proprietário");
     if (!study.endereco) newAlerts.push("Falta o endereço da subestação");
     if (study.demanda_nova <= 0) newAlerts.push("Defina a nova demanda do projeto");
+    const totalKva = study.trafo_kva * (study.trafo_qtd || 1);
     if (study.trafo_kva <= 0) newAlerts.push("Potência do trafo não pode ser zero");
 
     if (conc) {
        // Requirement verification based on concessionaire
        if (study.rele_fase.tms < 0.05) newAlerts.push(`Coordenagem de fase muito rápida para ${conc.nome}`);
-       if (study.trafo_kva >= 300 && study.equipamentos.length === 0) {
-         newAlerts.push(`Para ${study.trafo_kva}kVA, informe os equipamentos alimentados`);
+       if (totalKva >= 300 && study.equipamentos.length === 0) {
+         newAlerts.push(`Para ${totalKva}kVA, informe os equipamentos alimentados`);
        }
-       if (study.trafo_kva > 1000 && study.rele_fase.pickup < 40) newAlerts.push("Pickup de fase baixo para a potência instalada");
+       if (totalKva > 1000 && study.rele_fase.pickup < 40) newAlerts.push("Pickup de fase baixo para a potência instalada");
     }
 
     setAlerts(newAlerts);
@@ -493,8 +555,9 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
   specialPoints.push({ label: 'CARGA', I: InomPlant, t: 10, type: 'NOMINAL' });
 
   // Main Transformer Points
-  specialPoints.push(...calculateANSIPoints(study.trafo_kva, study.trafo_v_prim, study.trafo_z).map(p => ({...p, type: 'ANSI' as any})));
-  specialPoints.push({...calculateInrushPoint(study.trafo_kva, study.trafo_v_prim), type: 'INRUSH' as any});
+  const mainTrafoTotalKva = study.trafo_kva * (study.trafo_qtd || 1);
+  specialPoints.push(...calculateANSIPoints(mainTrafoTotalKva, study.trafo_v_prim, study.trafo_z).map(p => ({...p, type: 'ANSI' as any})));
+  specialPoints.push({...calculateInrushPoint(mainTrafoTotalKva, study.trafo_v_prim), type: 'INRUSH' as any});
 
   // Relay Setting Markers
   if (study.rele_fase.i_inst > 0) {
@@ -504,10 +567,57 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     specialPoints.push({ label: '50DF', I: study.rele_fase.i_def, t: study.rele_fase.t_def, type: 'DEF' as any });
   }
   if (study.rele_neutro.i_inst > 0) {
-    specialPoints.push({ label: '50N', I: study.rele_neutro.i_inst, t: 0.012, type: 'INST' as any });
+    specialPoints.push({ label: '50N', I: study.rele_neutro.i_inst, t: 0.015, type: 'INST' as any });
   }
   if (study.rele_neutro.i_def > 0) {
     specialPoints.push({ label: '50DN', I: study.rele_neutro.i_def, t: study.rele_neutro.t_def, type: 'DEF' as any });
+  }
+
+  // Dynamic Simulated Intersection Points (highlighting actual timing on curves)
+  if (simulationStatus === 'done') {
+    if (simulationType === '3phase') {
+      const pTime = calculateActualRelayTime(
+        study.icc_3f,
+        study.rele_fase.pickup,
+        study.rele_fase.tms,
+        study.rele_fase.curva,
+        { A: study.rele_fase.A, B: study.rele_fase.B, P: study.rele_fase.P },
+        study.rele_fase.i_def,
+        study.rele_fase.t_def,
+        study.rele_fase.i_inst
+      );
+      if (pTime > 0 && pTime < 1000) {
+        specialPoints.push({ label: 'TRIP 3Ф', I: study.icc_3f, t: pTime, type: 'INST' as any });
+      }
+    } else if (simulationType === '1phase') {
+      const nTime = calculateActualRelayTime(
+        study.icc_1f,
+        study.rele_neutro.pickup,
+        study.rele_neutro.tms,
+        study.rele_neutro.curva,
+        { A: study.rele_neutro.A, B: study.rele_neutro.B, P: study.rele_neutro.P },
+        study.rele_neutro.i_def,
+        study.rele_neutro.t_def,
+        study.rele_neutro.i_inst
+      );
+      if (nTime > 0 && nTime < 1000) {
+        specialPoints.push({ label: 'TRIP 1Ф', I: study.icc_1f, t: nTime, type: 'INST' as any });
+      }
+    } else if (simulationType === 'overload') {
+      const overTime = calculateActualRelayTime(
+        InomPlant * 1.5,
+        study.rele_fase.pickup,
+        study.rele_fase.tms,
+        study.rele_fase.curva,
+        { A: study.rele_fase.A, B: study.rele_fase.B, P: study.rele_fase.P },
+        study.rele_fase.i_def,
+        study.rele_fase.t_def,
+        study.rele_fase.i_inst
+      );
+      if (overTime > 0 && overTime < 1000) {
+        specialPoints.push({ label: 'TRIP SO', I: InomPlant * 1.5, t: overTime, type: 'NOMINAL' as any });
+      }
+    }
   }
 
   // Geração e Sincronismo Markers
@@ -949,13 +1059,22 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                           ))}
                        </div>
                     </div>
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       <div>
                         <FieldInfo label="Trafo (kVA)" description="Potência nominal do transformador principal da instalação." />
                         <input 
                           type="number" 
                           value={study.trafo_kva}
                           onChange={(e) => setStudy({...study, trafo_kva: Number(e.target.value)})}
+                          className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
+                        />
+                      </div>
+                      <div>
+                        <FieldInfo label="Quantidade" description="Quantidade de transformadores de mesma potência operando em paralelo no banco principal." />
+                        <input 
+                          type="number" 
+                          value={study.trafo_qtd || 1}
+                          onChange={(e) => setStudy({...study, trafo_qtd: Number(e.target.value)})}
                           className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
                         />
                       </div>
@@ -999,6 +1118,31 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                           <option value="Seco">Seco</option>
                           <option value="Silicone">Silicone</option>
                         </select>
+                      </div>
+                    </div>
+
+                    {/* Cálculos Automáticos do Trafo Principal */}
+                    <div className="mt-4 p-3 bg-green-950/20 border border-green-900/40 rounded-lg space-y-2">
+                      <h4 className="text-[10px] font-bold text-green-400 uppercase tracking-wider flex items-center gap-1.5 leading-none">
+                        <Zap className="w-3.5 h-3.5" /> Cálculos Automáticos do Banco de Trafo ({study.trafo_kva * (study.trafo_qtd || 1)} kVA total)
+                      </h4>
+                      <div className="grid grid-cols-2 sm:grid-cols-4 gap-2 text-zinc-300 text-[10px] font-mono">
+                        <div className="p-2 bg-black/40 border border-zinc-900 rounded">
+                          <p className="text-zinc-500 text-[8px] uppercase">Corrente Nominal (In)</p>
+                          <p className="text-green-400 font-bold">{(((study.trafo_kva * (study.trafo_qtd || 1)) * 1000) / (study.trafo_v_prim * 1.732)).toFixed(2)}A</p>
+                        </div>
+                        <div className="p-2 bg-black/40 border border-zinc-900 rounded">
+                          <p className="text-zinc-500 text-[8px] uppercase">Magnetização (Inrush)</p>
+                          <p className="text-yellow-500 font-bold">{((((study.trafo_kva * (study.trafo_qtd || 1)) * 1000) / (study.trafo_v_prim * 1.732)) * 10).toFixed(2)}A</p>
+                        </div>
+                        <div className="p-2 bg-black/40 border border-zinc-900 rounded">
+                          <p className="text-zinc-500 text-[8px] uppercase">Inst. Fase (50)</p>
+                          <p className="text-red-400 font-bold">{((((study.trafo_kva * (study.trafo_qtd || 1)) * 1000) / (study.trafo_v_prim * 1.732)) * 12.5).toFixed(2)}A</p>
+                        </div>
+                        <div className="p-2 bg-black/40 border border-zinc-900 rounded">
+                          <p className="text-zinc-500 text-[8px] uppercase">Inst. Neutro (50N)</p>
+                          <p className="text-blue-400 font-bold">{((((study.trafo_kva * (study.trafo_qtd || 1)) * 1000) / (study.trafo_v_prim * 1.732)) * 4.0).toFixed(2)}A</p>
+                        </div>
                       </div>
                     </div>
                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 mt-4">
@@ -1119,49 +1263,62 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                           </div>
                         </div>
 
-                        {eq.tipo === 'Transformador' && (
-                          <div className="grid grid-cols-3 gap-2 mb-2 border-t border-zinc-800 pt-2">
-                             <div>
-                                <label className="text-[8px] text-zinc-600 uppercase block">Z (%)</label>
-                                <input 
-                                  type="number" 
-                                  value={eq.z}
-                                  onChange={(e) => updateEquipamento(eq.id, 'z', Number(e.target.value))}
-                                  className="w-full bg-black border border-zinc-900 text-zinc-400 p-1 text-[9px] rounded font-mono"
-                                />
+                         {eq.tipo === 'Transformador' && (
+                           <>
+                             <div className="grid grid-cols-3 gap-2 mb-2 border-t border-zinc-800 pt-2">
+                                <div>
+                                   <label className="text-[8px] text-zinc-600 uppercase block">Z (%)</label>
+                                   <input 
+                                     type="number" 
+                                     value={eq.z}
+                                     onChange={(e) => updateEquipamento(eq.id, 'z', Number(e.target.value))}
+                                     className="w-full bg-black border border-zinc-900 text-zinc-400 p-1 text-[9px] rounded font-mono"
+                                   />
+                                </div>
+                                <div>
+                                   <label className="text-[8px] text-zinc-600 uppercase block">V. Prim (V)</label>
+                                   <input 
+                                     type="number" 
+                                     value={eq.v_prim}
+                                     onChange={(e) => updateEquipamento(eq.id, 'v_prim', Number(e.target.value))}
+                                     className="w-full bg-black border border-zinc-900 text-zinc-400 p-1 text-[9px] rounded font-mono"
+                                   />
+                                </div>
+                                <div>
+                                   <label className="text-[8px] text-zinc-600 uppercase block">V. Sec (V)</label>
+                                   <input 
+                                     type="number" 
+                                     value={eq.v_sec}
+                                     onChange={(e) => updateEquipamento(eq.id, 'v_sec', Number(e.target.value))}
+                                     className="w-full bg-black border border-zinc-900 text-zinc-400 p-1 text-[9px] rounded font-mono"
+                                   />
+                                </div>
+                                <div className="col-span-3">
+                                   <label className="text-[8px] text-zinc-600 uppercase block">Isolamento</label>
+                                   <select 
+                                     value={eq.isolamento}
+                                     onChange={(e) => updateEquipamento(eq.id, 'isolamento', e.target.value)}
+                                     className="w-full bg-black border border-zinc-900 text-zinc-400 p-1 text-[9px] rounded"
+                                   >
+                                     <option value="A Óleo">A Óleo</option>
+                                     <option value="Seco">Seco</option>
+                                     <option value="Silicone">Silicone</option>
+                                   </select>
+                                </div>
                              </div>
-                             <div>
-                                <label className="text-[8px] text-zinc-600 uppercase block">V. Prim (V)</label>
-                                <input 
-                                  type="number" 
-                                  value={eq.v_prim}
-                                  onChange={(e) => updateEquipamento(eq.id, 'v_prim', Number(e.target.value))}
-                                  className="w-full bg-black border border-zinc-900 text-zinc-400 p-1 text-[9px] rounded font-mono"
-                                />
+
+                             {/* Cálculos Automáticos para o Trafo Adicional */}
+                             <div className="mt-1 mb-2 p-2 bg-green-950/20 border border-green-900/30 rounded text-[9px] font-mono space-y-1">
+                                <p className="text-green-400 font-bold uppercase text-[7px] leading-tight flex items-center gap-1"><Zap className="w-2.5 h-2.5" /> Cálculos do Trafo {eq.kva * (eq.qtd || 1)} kVA</p>
+                                <div className="grid grid-cols-2 gap-x-2 text-zinc-400">
+                                   <p>Nominal (In): <span className="text-white font-bold">{(((eq.kva * (eq.qtd || 1)) * 1000) / ((eq.v_prim || study.trafo_v_prim || 13800) * 1.732)).toFixed(2)}A</span></p>
+                                   <p>Inrush (10x): <span className="text-white font-bold">{((((eq.kva * (eq.qtd || 1)) * 1000) / ((eq.v_prim || study.trafo_v_prim || 13800) * 1.732)) * 10).toFixed(2)}A</span></p>
+                                   <p>Inst Fase (12.5x): <span className="text-white font-bold">{((((eq.kva * (eq.qtd || 1)) * 1000) / ((eq.v_prim || study.trafo_v_prim || 13800) * 1.732)) * 12.5).toFixed(2)}A</span></p>
+                                   <p>Inst Neutro (4x): <span className="text-white font-bold">{((((eq.kva * (eq.qtd || 1)) * 1000) / ((eq.v_prim || study.trafo_v_prim || 13800) * 1.732)) * 4.0).toFixed(2)}A</span></p>
+                                </div>
                              </div>
-                             <div>
-                                <label className="text-[8px] text-zinc-600 uppercase block">V. Sec (V)</label>
-                                <input 
-                                  type="number" 
-                                  value={eq.v_sec}
-                                  onChange={(e) => updateEquipamento(eq.id, 'v_sec', Number(e.target.value))}
-                                  className="w-full bg-black border border-zinc-900 text-zinc-400 p-1 text-[9px] rounded font-mono"
-                                />
-                             </div>
-                             <div className="col-span-3">
-                                <label className="text-[8px] text-zinc-600 uppercase block">Isolamento</label>
-                                <select 
-                                  value={eq.isolamento}
-                                  onChange={(e) => updateEquipamento(eq.id, 'isolamento', e.target.value)}
-                                  className="w-full bg-black border border-zinc-900 text-zinc-400 p-1 text-[9px] rounded"
-                                >
-                                  <option value="A Óleo">A Óleo</option>
-                                  <option value="Seco">Seco</option>
-                                  <option value="Silicone">Silicone</option>
-                                </select>
-                             </div>
-                          </div>
-                        )}
+                           </>
+                         )}
                         <div className="grid grid-cols-4 gap-2">
                           <div className="col-span-1">
                             <label className="text-[9px] text-zinc-500 uppercase block">Qtd</label>
@@ -1227,20 +1384,20 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                                <div className="p-2 bg-black rounded border border-zinc-800">
                                  <p className="text-[10px] text-zinc-400 mb-1">Cálculo de Inom (Primário):</p>
                                  <p className="text-[11px] text-green-500 font-mono font-bold">
-                                   {study.trafo_kva}kVA / ({study.trafo_v_prim/1000}kV × 1.732) = 
+                                   {study.trafo_kva * (study.trafo_qtd || 1)}kVA / ({study.trafo_v_prim/1000}kV × 1.732) = 
                                    <span className="text-white ml-1">
-                                      {((study.trafo_kva * 1000) / (study.trafo_v_prim * 1.732)).toFixed(2)}A
+                                      {(((study.trafo_kva * (study.trafo_qtd || 1)) * 1000) / (study.trafo_v_prim * 1.732)).toFixed(2)}A
                                    </span>
                                  </p>
                                </div>
                                <div className="grid grid-cols-2 gap-2">
                                  <div className="p-2 bg-black rounded border border-zinc-800">
                                    <p className="text-[9px] text-zinc-500 mb-1 uppercase">Pickup Fase</p>
-                                   <p className="text-[10px] text-green-400 font-bold">1.25 × Inom = {Math.ceil(((study.trafo_kva * 1000) / (study.trafo_v_prim * 1.732)) * 1.25)}A</p>
+                                   <p className="text-[10px] text-green-400 font-bold">1.25 × Inom = {Math.ceil((((study.trafo_kva * (study.trafo_qtd || 1)) * 1000) / (study.trafo_v_prim * 1.732)) * 1.25)}A</p>
                                  </div>
                                  <div className="p-2 bg-black rounded border border-zinc-800">
                                    <p className="text-[9px] text-zinc-500 mb-1 uppercase">Pickup Neutro</p>
-                                   <p className="text-[10px] text-blue-400 font-bold">20% Fase = {Math.ceil(Math.ceil(((study.trafo_kva * 1000) / (study.trafo_v_prim * 1.732)) * 1.5) * 0.2)}A</p>
+                                   <p className="text-[10px] text-blue-400 font-bold">20% Fase = {Math.ceil(Math.ceil((((study.trafo_kva * (study.trafo_qtd || 1)) * 1000) / (study.trafo_v_prim * 1.732)) * 1.25) * 0.2)}A</p>
                                  </div>
                                </div>
                                <p className="text-[9px] text-zinc-500 leading-tight italic">
@@ -1468,11 +1625,13 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                               <label className="text-[9px] text-zinc-500 uppercase block mb-1">Corrente Instantânea (A)</label>
                               <input 
                                 type="number" 
-                                value={study.rele_fase.i_inst}
-                                onChange={(e) => setStudy({...study, rele_fase: {...study.rele_fase, i_inst: Number(e.target.value)}})}
-                                className="w-full bg-black border border-green-500/30 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 font-mono"
-                                placeholder="OFF"
+                                value={typeof study.rele_fase.i_inst === 'number' ? Number(study.rele_fase.i_inst.toFixed(2)) : 0}
+                                readOnly
+                                className="w-full bg-black/60 border border-green-500/15 text-green-400 p-2 text-xs rounded outline-none font-mono opacity-80 cursor-not-allowed"
                               />
+                              <span className="text-[8px] text-zinc-500 font-mono mt-1.5 block uppercase">
+                                CALCULADO (12.5x Inom: {typeof study.rele_fase.i_inst === 'number' ? study.rele_fase.i_inst.toFixed(2) : '0.00'}A)
+                              </span>
                            </div>
                         </div>
                       </div>
@@ -1611,11 +1770,13 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                               <label className="text-[9px] text-zinc-500 uppercase block mb-1">Corrente Instantânea (A)</label>
                               <input 
                                 type="number" 
-                                value={study.rele_neutro.i_inst}
-                                onChange={(e) => setStudy({...study, rele_neutro: {...study.rele_neutro, i_inst: Number(e.target.value)}})}
-                                className="w-full bg-black border border-blue-500/30 text-blue-400 p-2 text-xs rounded outline-none focus:border-blue-500 font-mono"
-                                placeholder="OFF"
+                                value={typeof study.rele_neutro.i_inst === 'number' ? Number(study.rele_neutro.i_inst.toFixed(2)) : 0}
+                                readOnly
+                                className="w-full bg-black/60 border border-blue-500/15 text-blue-400 p-2 text-xs rounded outline-none font-mono opacity-80 cursor-not-allowed"
                               />
+                              <span className="text-[8px] text-zinc-500 font-mono mt-1.5 block uppercase">
+                                CALCULADO (4.0x Inom: {typeof study.rele_neutro.i_inst === 'number' ? study.rele_neutro.i_inst.toFixed(2) : '0.00'}A)
+                              </span>
                            </div>
                         </div>
                       </div>
@@ -1959,7 +2120,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <h4 className="text-[9px] font-bold text-zinc-500 uppercase mb-3 flex items-center gap-2">
                        <Zap className="w-3 h-3 text-yellow-500" /> Simulações de Atuação
                     </h4>
-                    <div className="grid grid-cols-2 gap-3">
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-3">
                        <button 
                          onClick={() => runSimulation('3phase')}
                          disabled={simulationStatus === 'running'}
@@ -1980,8 +2141,16 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                              <span className="text-[12px] font-mono text-zinc-400">{study.icc_3f}A</span>
                              <span className="text-[14px] font-mono text-red-500 font-bold">
                                 {simulationStatus === 'done' ? (
-                                  study.rele_fase.i_inst > 0 && study.icc_3f >= study.rele_fase.i_inst ? '0.010s' : 
-                                  calculateTime(study.icc_3f, study.rele_fase.pickup, study.rele_fase.tms, study.rele_fase.curva).toFixed(3) + 's'
+                                  calculateActualRelayTime(
+                                    study.icc_3f,
+                                    study.rele_fase.pickup,
+                                    study.rele_fase.tms,
+                                    study.rele_fase.curva,
+                                    { A: study.rele_fase.A, B: study.rele_fase.B, P: study.rele_fase.P },
+                                    study.rele_fase.i_def,
+                                    study.rele_fase.t_def,
+                                    study.rele_fase.i_inst
+                                  ).toFixed(3) + 's'
                                 ) : '---'}
                              </span>
                           </div>
@@ -2018,10 +2187,19 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                              {simulationStatus === 'running' ? <div className="w-2 h-2 border border-yellow-500 border-t-transparent rounded-full animate-spin" /> : <ChevronRight className="w-2 h-2" />}
                           </div>
                           <div className="flex justify-between items-baseline">
-                             <span className="text-[12px] font-mono text-zinc-400">{(calculateInominal(study.trafo_kva, study.trafo_v_prim) * 1.5).toFixed(1)}A</span>
+                             <span className="text-[12px] font-mono text-zinc-400">{(calculateInominal(study.trafo_kva * (study.trafo_qtd || 1), study.trafo_v_prim) * 1.5).toFixed(2)}A</span>
                              <span className="text-[14px] font-mono text-yellow-500 font-bold">
                                 {simulationStatus === 'done' ? (
-                                  calculateTime(calculateInominal(study.trafo_kva, study.trafo_v_prim) * 1.5, study.rele_fase.pickup, study.rele_fase.tms, study.rele_fase.curva).toFixed(1) + 's'
+                                  calculateActualRelayTime(
+                                    calculateInominal(study.trafo_kva * (study.trafo_qtd || 1), study.trafo_v_prim) * 1.5,
+                                    study.rele_fase.pickup,
+                                    study.rele_fase.tms,
+                                    study.rele_fase.curva,
+                                    { A: study.rele_fase.A, B: study.rele_fase.B, P: study.rele_fase.P },
+                                    study.rele_fase.i_def,
+                                    study.rele_fase.t_def,
+                                    study.rele_fase.i_inst
+                                  ).toFixed(2) + 's'
                                 ) : '---'}
                              </span>
                           </div>
@@ -2035,6 +2213,53 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                              >
                                 <p className="text-[9px] text-zinc-400 leading-tight italic">
                                    Simulação de Sobrecarga: Verificação térmica em 150% da corrente nominal. Tempo de atuação calculado para proteger o isolamento do transformador de acordo com a curva ANSI/IEEE C57.109.
+                                </p>
+                             </motion.div>
+                          )}
+                       </button>
+                       <button 
+                         onClick={() => runSimulation('1phase')}
+                         disabled={simulationStatus === 'running'}
+                         className={`p-3 bg-black/40 border border-zinc-800 rounded-lg text-left hover:bg-zinc-800/50 transition-colors group relative overflow-hidden ${simulationStatus === 'running' ? 'opacity-70 cursor-not-allowed' : ''}`}
+                       >
+                          {simulationStatus === 'running' && (
+                            <motion.div 
+                              className="absolute bottom-0 left-0 h-0.5 bg-blue-500"
+                              initial={{ width: 0 }}
+                              animate={{ width: `${simulationProgress}%` }}
+                            />
+                          )}
+                          <div className="text-[8px] text-zinc-600 uppercase font-black mb-2 group-hover:text-blue-500 flex items-center gap-1">
+                             {simulationStatus === 'running' ? 'Simulando...' : 'Simular Falta Monofásica'}
+                             {simulationStatus === 'running' ? <div className="w-2 h-2 border border-blue-500 border-t-transparent rounded-full animate-spin" /> : <ChevronRight className="w-2 h-2" />}
+                          </div>
+                          <div className="flex justify-between items-baseline">
+                             <span className="text-[12px] font-mono text-zinc-400">{study.icc_1f}A</span>
+                             <span className="text-[14px] font-mono text-blue-500 font-bold">
+                                {simulationStatus === 'done' ? (
+                                  calculateActualRelayTime(
+                                    study.icc_1f,
+                                    study.rele_neutro.pickup,
+                                    study.rele_neutro.tms,
+                                    study.rele_neutro.curva,
+                                    { A: study.rele_neutro.A, B: study.rele_neutro.B, P: study.rele_neutro.P },
+                                    study.rele_neutro.i_def,
+                                    study.rele_neutro.t_def,
+                                    study.rele_neutro.i_inst
+                                  ).toFixed(3) + 's'
+                                ) : '---'}
+                             </span>
+                          </div>
+                          <div className="text-[7px] text-zinc-700 mt-1 uppercase font-bold">Verificar unidade de neutro terra (51N/50N)</div>
+
+                          {simulationStatus === 'done' && simulationType === '1phase' && (
+                             <motion.div 
+                               initial={{ opacity: 0, y: 5 }}
+                               animate={{ opacity: 1, y: 0 }}
+                               className="mt-3 pt-2 border-t border-zinc-800/50"
+                             >
+                                <p className="text-[9px] text-zinc-400 leading-tight italic">
+                                   Falta à Terra: Simulação de curto monofásico. Avalia a resposta de tempo da proteção 51N (temporizada) ou 50N (instantânea) garantindo a extinção rápida do arco.
                                 </p>
                              </motion.div>
                           )}

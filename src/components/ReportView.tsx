@@ -673,7 +673,7 @@ Versão do Sistema: 1.1.0 PRO
   );
 };
 const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) => {
-  const In = study.trafo_kva / (Math.sqrt(3) * study.trafo_v_prim / 1000);
+  const In = (study.trafo_kva * (study.trafo_qtd || 1)) / (Math.sqrt(3) * study.trafo_v_prim / 1000);
   const tcRatioStr = study.tc_relacao || '50/5';
   const InomPlanta = calculateInPlant(study.demanda_nova, study.trafo_v_prim, study.fator_potencia);
   const tcValidation = validateTC(tcRatioStr, study.icc_3f, InomPlanta);
@@ -725,7 +725,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
             <tr>
               <td className="calc-box w-1/2">
                 <p className="calc-formula text-[10px]">In_Trafo = S / (V_prim * √3)</p>
-                <p>Calculado: {study.trafo_kva}kVA / ({(study.trafo_v_prim/1000).toFixed(2)}kV * 1.732)</p>
+                <p>Calculado: {study.trafo_kva * (study.trafo_qtd || 1)}kVA / ({(study.trafo_v_prim/1000).toFixed(2)}kV * 1.732)</p>
                 <p className="font-bold mt-1 text-[11px]">Resultado: {In.toFixed(2)} A</p>
               </td>
               <td className="calc-box w-1/2">
@@ -859,7 +859,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
               </td>
               <td className="calc-box w-1/2">
                 <p className="calc-formula text-[10px]">Critério de Carga</p>
-                <p>I_tc_prim ({study.tc_relacao.split('/')[0]}A) &gt; In_Planta ({InomPlanta.toFixed(1)}A)</p>
+                <p>I_tc_prim ({study.tc_relacao.split('/')[0]}A) &gt; In_Planta ({InomPlanta.toFixed(2)}A)</p>
                 <p className={parseFloat(study.tc_relacao.split('/')[0]) >= InomPlanta ? 'text-green-600 font-bold' : 'text-red-600 font-bold'}>
                    {parseFloat(study.tc_relacao.split('/')[0]) >= InomPlanta ? 'Status: Conforme' : 'Status: Subdimensionado'}
                 </p>
@@ -913,7 +913,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
 };
 
 const CemigReport = ({ study, curves, specialPoints }: any) => {
-  const In = study.trafo_kva / (Math.sqrt(3) * study.trafo_v_prim / 1000);
+  const In = (study.trafo_kva * (study.trafo_qtd || 1)) / (Math.sqrt(3) * study.trafo_v_prim / 1000);
   const InomPlant = (study.demanda_nova) / (study.trafo_v_prim * Math.sqrt(3) * study.fator_potencia / 1000);
   const tcRatioStr = study.tc_relacao || '50/5';
   const tcSaturationLevel = study.icc_3f / (parseFloat(tcRatioStr.split('/')[0]) || 1);
@@ -959,7 +959,7 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
             <tr>
               <td className="calc-box w-1/2">
                  <p className="calc-formula text-[8px] uppercase">In_Trafo (Corrente Nominal Trafos)</p>
-                 <p className="text-[10px]">I = {study.trafo_kva}kVA / ({(study.trafo_v_prim/1000).toFixed(2)}kV * 1.732) = {In.toFixed(2)}A</p>
+                 <p className="text-[10px]">I = {study.trafo_kva * (study.trafo_qtd || 1)}kVA / ({(study.trafo_v_prim/1000).toFixed(2)}kV * 1.732) = {In.toFixed(2)}A</p>
               </td>
               <td className="calc-box w-1/2">
                  <p className="calc-formula text-[8px] uppercase">In_Carga (Corrente Nominal Planta)</p>
@@ -1001,7 +1001,7 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
                 <td>{eq.qtd}</td>
                 <td className="text-[8px]">
                   {eq.tipo === 'Transformador' && `Z: ${eq.z}% | ${eq.v_prim/1000}/${eq.v_sec}kV`}
-                  {eq.tipo === 'Motor' && `Inrush Estimado: ${(eq.kva / (study.trafo_v_prim * Math.sqrt(3) * 0.85 * 0.9 / 1000) * 6).toFixed(1)}A`}
+                  {eq.tipo === 'Motor' && `Inrush Estimado: ${(eq.kva / (study.trafo_v_prim * Math.sqrt(3) * 0.85 * 0.9 / 1000) * 6).toFixed(2)}A`}
                   {!['Transformador', 'Motor'].includes(eq.tipo) && 'Carga geral de baixa tensão'}
                 </td>
               </tr>
