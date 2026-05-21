@@ -59,9 +59,9 @@ export const ReportView: React.FC<ReportProps> = ({ study, concessionaria, onClo
       const pageWidth = pdf.internal.pageSize.getWidth();
       const pageHeight = pdf.internal.pageSize.getHeight();
       
-      const leftMargin = 22; // Margem esquerda ampliada
-      const rightMargin = 12; 
-      const vMargin = 15; 
+      const leftMargin = 20; // Margem esquerda 20mm (2cm) conforme padrão de engenharia
+      const rightMargin = 20; // Margem direita 20mm (2cm)
+      const vMargin = 20; // Margem superior/inferior 20mm (2cm)
       const contentWidth = pageWidth - leftMargin - rightMargin;
       const pageInnerHeight = pageHeight - (2 * vMargin);
 
@@ -138,8 +138,8 @@ Cód. Instalação: ${study.codigo_instalacao || 'N/A'}
 
 2. RESPONSÁVEL TÉCNICO
 ---------------------------
-Engenheiro: ${study.rt_nome}
-CREA/CFT: ${study.rt_crea}
+Responsável Técnico: ${study.rt_nome}
+CREA/CRT: ${study.rt_crea}
 ART Número: ${study.art_numero}
 
 3. DADOS DO SISTEMA E CONCESSIONÁRIA
@@ -254,7 +254,7 @@ Versão do Sistema: 1.1.0 PRO
         @media print {
           @page {
             size: A4 portrait;
-            margin: 0;
+            margin: 20mm 20mm 20mm 20mm !important;
           }
           *, *:before, *:after {
             box-sizing: border-box !important;
@@ -263,15 +263,14 @@ Versão do Sistema: 1.1.0 PRO
             height: auto !important;
             overflow: visible !important;
             background-color: white !important;
-            -webkit-print-color-adjust: exact;
-            print-color-adjust: exact;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
             color: black !important;
-            width: 210mm !important;
+            width: 100% !important;
+            max-width: 100% !important;
             margin: 0 !important;
             padding: 0 !important;
-            position: absolute !important;
-            left: 0 !important;
-            top: 0 !important;
+            position: static !important;
           }
           /* Esconde a aplicação principal e outros elementos */
           #root, .no-print, [class*="no-print"] {
@@ -287,6 +286,7 @@ Versão do Sistema: 1.1.0 PRO
             display: block !important;
             position: static !important;
             width: 100% !important;
+            max-width: 100% !important;
             height: auto !important;
             background: white !important;
             background-color: white !important;
@@ -302,7 +302,7 @@ Versão do Sistema: 1.1.0 PRO
             background-color: white !important;
             background-image: none !important;
             box-shadow: none !important;
-            border-color: #eee !important;
+            border-color: #000 !important;
           }
           /* Override inline styles for preview scaling during print */
           .report-portal-wrapper div:not(#printable-report) {
@@ -321,9 +321,10 @@ Versão do Sistema: 1.1.0 PRO
           #printable-report {
             display: block !important;
             visibility: visible !important;
-            width: 210mm !important;
-            min-height: 297mm !important;
-            padding: 5mm 15mm !important;
+            width: 100% !important;
+            max-width: 100% !important;
+            min-height: auto !important;
+            padding: 0 !important;
             margin: 0 !important;
             box-shadow: none !important;
             background: white !important;
@@ -335,100 +336,127 @@ Versão do Sistema: 1.1.0 PRO
           #printable-report table {
             table-layout: fixed !important;
             width: 100% !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+            break-inside: avoid-page !important;
           }
           #printable-report * {
             max-width: 100% !important;
             overflow-wrap: break-word !important;
           }
-          .report-section {
-            page-break-inside: avoid;
-            margin-bottom: 25px;
-            width: 100% !important;
+          
+          /* Permite que seções longas quebrem entre suas subpartes, mas evita que blocos individuais ou tabelas quebrem no meio */
+          section, .report-section {
+            page-break-inside: auto !important;
+            break-inside: auto !important;
           }
+          
+          /* Garante que blocos de cálculo individuais, tabelas, coordenogramas e assinaturas não quebrem */
+          .report-block, .calc-table, .calc-box, .coord-chart-container, table, tr, .signature-block, .rt-signature {
+            page-break-inside: avoid !important;
+            break-inside: avoid-page !important;
+            break-inside: avoid !important;
+          }
+          
+          h1, h2, h3, h4, h5, h6, .report-section-title {
+            page-break-after: avoid !important;
+            break-after: avoid !important;
+            break-after: avoid-page !important;
+          }
+
           .page-break-before-always {
-            page-break-before: always;
+            page-break-before: always !important;
+            break-before: page !important;
           }
           /* Forçar contraste preto para impressão */
           .text-zinc-600, .text-zinc-500, .text-zinc-400 {
-            color: #333 !important;
+            color: #111111 !important;
           }
           .report-table {
             width: 100% !important;
             table-layout: fixed !important;
             border-collapse: collapse !important;
+            margin-bottom: 20px !important;
           }
           .report-table th, .report-table td {
             border: 1px solid black !important;
-            word-break: break-all !important;
-            overflow-wrap: anywhere !important;
+            word-break: break-word !important;
+            overflow-wrap: break-word !important;
+            padding: 8px 10px !important;
+            font-size: 9px !important;
           }
           .report-table th {
-            background: #e2e8f0 !important;
+            background: #f1f5f9 !important;
+            font-weight: bold !important;
           }
-            /* Ajuste do Gráfico para Impressão */
-            .coord-chart-container {
-              background-color: white !important;
-              border: 2px solid #000 !important;
-              max-width: 100% !important;
-              width: 100% !important;
-              height: auto !important;
-              aspect-ratio: 4 / 3 !important;
-              padding: 0 !important;
-              margin: 20px 0 !important;
-              box-shadow: none !important;
-              border-radius: 0 !important;
-              display: block !important;
-              visibility: visible !important;
-              print-color-adjust: exact !important;
-              -webkit-print-color-adjust: exact !important;
-            }
-            .coord-chart-container svg {
-              display: block !important;
-              visibility: visible !important;
-              width: 100% !important;
-              height: 100% !important;
-              min-height: 500px !important;
-              background-color: white !important;
-            }
-            /* Garantir que as linhas e textos internos apareçam */
-            .coord-chart-container svg g.x-axis line,
-            .coord-chart-container svg g.y-axis line {
-              stroke: #999 !important;
-              stroke-opacity: 1 !important;
-              stroke-width: 0.8px !important;
-            }
-            .coord-chart-container svg g.x-axis text,
-            .coord-chart-container svg g.y-axis text {
-              fill: #000 !important;
-              stroke: none !important;
-              font-weight: 900 !important;
-              font-size: 11px !important;
-            }
-            .coord-chart-container .label-axis {
-              fill: #000 !important;
-              font-weight: 900 !important;
-              font-size: 14px !important;
-            }
-            .coord-chart-container .label-bg {
-              fill: white !important;
-              stroke: black !important;
-              stroke-width: 1px !important;
-            }
-            .coord-chart-container text {
-              fill: black !important;
-            }
-            /* Manter as cores das curvas no print */
-            .curve-path {
-              print-color-adjust: exact !important;
-              -webkit-print-color-adjust: exact !important;
-            }
+          /* Ajuste do Gráfico para Impressão */
+          .coord-chart-container {
+            background-color: white !important;
+            border: 2px solid #000 !important;
+            max-width: 100% !important;
+            width: 100% !important;
+            height: auto !important;
+            aspect-ratio: 4 / 3 !important;
+            padding: 0 !important;
+            margin: 20px 0 !important;
+            box-shadow: none !important;
+            border-radius: 0 !important;
+            display: block !important;
+            visibility: visible !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+            print-color-adjust: exact !important;
+            -webkit-print-color-adjust: exact !important;
+          }
+          .coord-chart-container svg {
+            display: block !important;
+            visibility: visible !important;
+            width: 100% !important;
+            height: 100% !important;
+            min-height: 450px !important;
+            background-color: white !important;
+          }
+          /* Garantir que as linhas e textos internos apareçam */
+          .coord-chart-container svg g.x-axis line,
+          .coord-chart-container svg g.y-axis line {
+            stroke: #666 !important;
+            stroke-opacity: 1 !important;
+            stroke-width: 0.8px !important;
+          }
+          .coord-chart-container svg g.x-axis text,
+          .coord-chart-container svg g.y-axis text {
+            fill: #000 !important;
+            stroke: none !important;
+            font-weight: 900 !important;
+            font-size: 11px !important;
+          }
+          .coord-chart-container .label-axis {
+            fill: #000 !important;
+            font-weight: 900 !important;
+            font-size: 14px !important;
+          }
+          .coord-chart-container .label-bg {
+            fill: white !important;
+            stroke: black !important;
+            stroke-width: 1px !important;
+          }
+          .coord-chart-container text {
+            fill: black !important;
+          }
+          /* Manter as cores das curvas no print */
+          .curve-path {
+            print-color-adjust: exact !important;
+            -webkit-print-color-adjust: exact !important;
+          }
           .coord-chart-container .label-axis {
             fill: #000 !important;
             font-weight: bold !important;
           }
           /* Linhas de grade e eixos do D3 no modo print */
           .coord-chart-container .grid line {
-            stroke: #ddd !important;
+            stroke: #e2e8f0 !important;
+            stroke-opacity: 1 !important;
+            stroke-dasharray: 2,2 !important;
           }
           .coord-chart-container .axis-label {
             fill: #000 !important;
@@ -451,10 +479,10 @@ Versão do Sistema: 1.1.0 PRO
             opacity: 1 !important;
           }
           .coord-chart-container .icc-lines rect {
-             fill: #eee !important;
+             fill: #f8fafc !important;
              stroke: #000 !important;
              stroke-width: 1px !important;
-             opacity: 0.8 !important;
+             opacity: 0.9 !important;
           }
           .coord-chart-container .special-points text,
           .coord-chart-container .icc-lines text,
@@ -464,13 +492,14 @@ Versão do Sistema: 1.1.0 PRO
           }
           /* Forçar curvas a serem mais visíveis no print */
           .coord-chart-container .curve-path {
-             stroke-width: 2.5px !important;
+             stroke-width: 3px !important;
           }
           .no-print {
             display: none !important;
           }
           .report-portal-wrapper * {
-            -webkit-print-color-adjust: exact;
+            -webkit-print-color-adjust: exact !important;
+            print-color-adjust: exact !important;
           }
         }
         
@@ -798,7 +827,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
       </div>
 
       {/* Seção 1: Identificação */}
-      <section className="report-section">
+      <section className="report-section report-block">
         <h3 className="report-section-title">1. Identificação do Projeto</h3>
         <table className="w-full text-[10px] border-collapse table-fixed">
           <tbody>
@@ -823,7 +852,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
         <h3 className="report-section-title">2. Memória de Cálculo do Sistema</h3>
         
         {/* Subsection 2.1 */}
-        <div className="mb-4">
+        <div className="mb-4 report-block">
           <h4 className="text-[10px] font-bold text-zinc-800 uppercase mb-2 border-b border-zinc-200 pb-0.5">2.1. Dimensionamento das Correntes Nominais</h4>
           <div className="grid grid-cols-2 gap-4">
             <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50">
@@ -850,7 +879,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
         </div>
 
         {/* Subsection 2.2 */}
-        <div className="mb-4">
+        <div className="mb-4 report-block">
           <h4 className="text-[10px] font-bold text-zinc-800 uppercase mb-2 border-b border-zinc-200 pb-0.5">2.2. Dimensionamento e Saturação do TC (Transformador de Corrente)</h4>
           <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed">
             <div className="grid grid-cols-2 gap-4">
@@ -881,7 +910,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
         </div>
 
         {/* Subsection 2.3 */}
-        <div className="mb-4">
+        <div className="mb-4 report-block">
           <h4 className="text-[10px] font-bold text-zinc-800 uppercase mb-2 border-b border-zinc-200 pb-0.5">2.3. Pontos Singulares do Transformador (ANSI e Inrush)</h4>
           <div className="grid grid-cols-2 gap-4">
             <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed">
@@ -1026,7 +1055,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
       </section>
 
       {/* Seção 2.1: Relação de Equipamentos */}
-      <section className="report-section">
+      <section className="report-section report-block">
         <h3 className="report-section-title">2.1. Relação de Equipamentos Instalados</h3>
         <table className="report-table">
           <thead>
@@ -1080,7 +1109,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
       </section>
 
       {/* Seção 4: Ajustes de Proteção */}
-      <section className="mb-6">
+      <section className="mb-6 report-block">
         <h3 className="report-section-title">4. Tabela de Ajustes (ANSI 50/51/50D)</h3>
         <table className="report-table">
           <thead>
@@ -1121,10 +1150,83 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
             </tr>
           </tbody>
         </table>
+
+        {study.rele_marca === 'Pextron' && (
+          <div className="mt-3 p-3 border border-green-300 rounded bg-green-50/20 text-[8px] font-mono">
+            <p className="font-bold text-green-700 uppercase mb-1">
+              4.1 Parâmetros Específicos para Parametrização do Relé Pextron (Secundário/Ajuste de Campo)
+            </p>
+            <table className="report-table text-[8px] text-zinc-700 mt-1.5">
+              <thead>
+                <tr className="bg-green-100">
+                  <th>ELEMENTO</th>
+                  <th>CÓDIGO RELÉ</th>
+                  <th>DESCRIÇÃO DA FUNÇÃO</th>
+                  <th>AJUSTE PRIMÁRIO</th>
+                  <th>AJUSTE SECUNDÁRIO (RELÉ)</th>
+                  <th>TEMPO DEFINIDO / AJUSTADO</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="font-bold">FASE (51)</td>
+                  <td className="font-bold text-green-700">I &gt;</td>
+                  <td>Corrente de Partida Temporizada (Fase)</td>
+                  <td>{study.rele_fase.pickup} A</td>
+                  <td className="font-bold">{(study.rele_fase.pickup / tcRatio).toFixed(2)} A</td>
+                  <td>Curva {study.rele_fase.curva.replace('IEC_', '')} / Dial {study.rele_fase.tms}</td>
+                </tr>
+                <tr>
+                  <td className="font-bold">FASE (50D)</td>
+                  <td className="font-bold text-green-700 font-mono">I &gt;&gt;</td>
+                  <td>Corrente de Partida de Tempo Definido (Fase)</td>
+                  <td>{study.rele_fase.i_def > 0 ? `${study.rele_fase.i_def} A` : 'DESABILITADO'}</td>
+                  <td className="font-bold">{study.rele_fase.i_def > 0 ? `${(study.rele_fase.i_def / tcRatio).toFixed(2)} A` : '---'}</td>
+                  <td>{study.rele_fase.i_def > 0 ? `${study.rele_fase.t_def.toFixed(2)} s` : '---'}</td>
+                </tr>
+                <tr>
+                  <td className="font-bold">FASE (50)</td>
+                  <td className="font-bold text-green-700 font-mono">I &gt;&gt;&gt;</td>
+                  <td>Corrente de Partida Instantânea (Fase)</td>
+                  <td>{study.rele_fase.i_inst > 0 ? `${study.rele_fase.i_inst} A` : 'DESABILITADO'}</td>
+                  <td className="font-bold">{study.rele_fase.i_inst > 0 ? `${(study.rele_fase.i_inst / tcRatio).toFixed(2)} A` : '---'}</td>
+                  <td>Instantâneo (0.015 s)</td>
+                </tr>
+                <tr>
+                  <td className="font-bold">NEUTRO (51N)</td>
+                  <td className="font-bold text-green-700 font-mono">IN &gt;</td>
+                  <td>Corrente de Partida Temporizada (Neutro)</td>
+                  <td>{study.rele_neutro.pickup} A</td>
+                  <td className="font-bold">{(study.rele_neutro.pickup / tcRatio).toFixed(2)} A</td>
+                  <td>Curva {study.rele_neutro.curva.replace('IEC_', '')} / Dial {study.rele_neutro.tms}</td>
+                </tr>
+                <tr>
+                  <td className="font-bold">NEUTRO (50DN)</td>
+                  <td className="font-bold text-green-700 font-mono">IN &gt;&gt;</td>
+                  <td>Corrente de Partida de Tempo Definido (Neutro)</td>
+                  <td>{study.rele_neutro.i_def > 0 ? `${study.rele_neutro.i_def} A` : 'DESABILITADO'}</td>
+                  <td className="font-bold">{study.rele_neutro.i_def > 0 ? `${(study.rele_neutro.i_def / tcRatio).toFixed(2)} A` : '---'}</td>
+                  <td>{study.rele_neutro.i_def > 0 ? `${study.rele_neutro.t_def.toFixed(2)} s` : '---'}</td>
+                </tr>
+                <tr>
+                  <td className="font-bold">NEUTRO (50N)</td>
+                  <td className="font-bold text-green-700 font-mono">IN &gt;&gt;&gt;</td>
+                  <td>Corrente de Partida Instantânea (Neutro)</td>
+                  <td>{study.rele_neutro.i_inst > 0 ? `${study.rele_neutro.i_inst} A` : 'DESABILITADO'}</td>
+                  <td className="font-bold">{study.rele_neutro.i_inst > 0 ? `${(study.rele_neutro.i_inst / tcRatio).toFixed(2)} A` : '---'}</td>
+                  <td>Instantâneo (0.015 s)</td>
+                </tr>
+              </tbody>
+            </table>
+            <p className="text-[7.5px] text-zinc-500 mt-1.5 uppercase leading-tight italic block">
+              * Nota: O ajuste secundário representa a corrente programada diretamente nas teclas frontais ou via software do relé Pextron (baseado na relação de transformação TC = {study.tc_relacao}).
+            </p>
+          </div>
+        )}
       </section>
 
       {/* Seção 5: Verificação de Saturação e Adequação */}
-      <section className="report-section">
+      <section className="report-section report-block">
         <h3 className="report-section-title">5. Verificação de Conexão e Saturação (TC)</h3>
         <table className="calc-table">
           <tbody>
@@ -1150,7 +1252,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
       </section>
 
       {/* Normas Técnicas */}
-      <section className="report-section">
+      <section className="report-section report-block">
         <h3 className="report-section-title">6. Normas Técnicas Utilizadas</h3>
         <div className="bg-zinc-50 p-4 border border-zinc-200">
            <ul className="grid grid-cols-2 gap-2 text-[9px] font-mono text-zinc-600 uppercase list-disc list-inside">
@@ -1162,7 +1264,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
       </section>
 
       {/* Parecer Técnico */}
-      <section className="mb-6 pt-4 border-t-2 border-black">
+      <section className="mb-6 pt-4 border-t-2 border-black report-block">
         <h3 className="report-section-title">7. Parecer Técnico Final</h3>
         <div className="bg-zinc-50 p-4 border border-zinc-200 text-[10px] space-y-2 uppercase font-mono italic">
            {getTechnicalSuggestions(study).length === 0 ? (
@@ -1176,11 +1278,11 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
       </section>
 
       {/* Assinaturas */}
-      <div className="mt-12 flex justify-between px-12">
+      <div className="mt-12 flex justify-between px-12 signature-block">
         <div className="text-center">
           <div className="w-[180px] border-t border-black mb-1"></div>
           <p className="text-[9px] font-black uppercase">{study.rt_nome}</p>
-          <p className="text-[7px] text-zinc-400">Responsável Técnico / CREA</p>
+          <p className="text-[7px] text-zinc-400">Responsável Técnico / CREA/CRT</p>
         </div>
         <div className="text-center">
           <div className="w-[180px] border-t border-black mb-1"></div>
@@ -1293,7 +1395,7 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
          </div>
       </div>
 
-      <section className="report-section">
+      <section className="report-section report-block">
         <h3 className="report-section-title">1. Dados da Unidade Consumidora</h3>
         <table className="w-full text-[10px] border-collapse bg-zinc-50/50 table-fixed">
           <tbody>
@@ -1322,7 +1424,7 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
         <h3 className="report-section-title">2. Memória de Cálculo e Dimensionamento</h3>
         
         {/* Subsection 2.1 */}
-        <div className="mb-4">
+        <div className="mb-4 report-block">
           <h4 className="text-[10px] font-bold text-zinc-800 uppercase mb-2 border-b border-zinc-200 pb-0.5">2.1. Dimensionamento das Correntes Nominais</h4>
           <div className="grid grid-cols-2 gap-4">
             <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50">
@@ -1349,7 +1451,7 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
         </div>
 
         {/* Subsection 2.2 */}
-        <div className="mb-4">
+        <div className="mb-4 report-block">
           <h4 className="text-[10px] font-bold text-zinc-800 uppercase mb-2 border-b border-zinc-200 pb-0.5">2.2. Dimensionamento e Saturação do TC (Transformador de Corrente)</h4>
           <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed">
             <div className="grid grid-cols-2 gap-4">
@@ -1380,7 +1482,7 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
         </div>
 
         {/* Subsection 2.3 */}
-        <div className="mb-4">
+        <div className="mb-4 report-block">
           <h4 className="text-[10px] font-bold text-zinc-800 uppercase mb-2 border-b border-zinc-200 pb-0.5">2.3. Pontos Singulares do Transformador (ANSI e Inrush)</h4>
           <div className="grid grid-cols-2 gap-4">
             <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed">
@@ -1525,7 +1627,7 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
       </section>
 
       {/* Relação de Equipamentos */}
-      <section className="report-section">
+      <section className="report-section report-block">
         <h3 className="report-section-title">2.1. Relação de Equipamentos Instalados</h3>
         <table className="report-table">
           <thead>
@@ -1570,7 +1672,7 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
         <p className="text-[7px] text-zinc-400 mt-2 uppercase text-center font-mono italic">Curvas de proteção conforme parâmetros técnicos da ND 5.3.</p>
       </section>
 
-      <section className="mb-4">
+      <section className="mb-4 report-block">
         <h3 className="report-section-title">4. Ajustes do Relé de Proteção (ANSI 50/51/50D)</h3>
         <table className="report-table">
           <thead>
@@ -1613,9 +1715,79 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
             </tr>
           </tbody>
         </table>
+
+        {study.rele_marca === 'Pextron' && (
+          <div className="mt-3 p-2 border border-green-200 rounded bg-green-50/20 text-[6.5px] font-mono">
+            <p className="font-bold text-green-700 uppercase mb-1">
+              4.1 Tabela de Parametrização Técnica - Linha Pextron (Ajuste Secundário do Relé)
+            </p>
+            <table className="report-table text-[6.5px] text-zinc-700 mt-1">
+              <thead>
+                <tr className="bg-green-100">
+                  <th>ELEMENTO</th>
+                  <th>CÓD RELÉ</th>
+                  <th>FUNÇÃO / CANAL</th>
+                  <th>AJUSTE PRIMÁRIO</th>
+                  <th>AJUSTE SECUNDÁRIO (RELÉ)</th>
+                  <th>TEMPO AJUSTADO / CURVA</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td className="font-bold">FASE (51)</td>
+                  <td className="font-bold text-green-700">I &gt;</td>
+                  <td>Partida Temporizada de Fase</td>
+                  <td>{study.rele_fase.pickup} A</td>
+                  <td className="font-bold">{(study.rele_fase.pickup / tcRatio).toFixed(2)} A</td>
+                  <td>Curva {study.rele_fase.curva.replace('IEC_', '')} / Dial {study.rele_fase.tms}</td>
+                </tr>
+                <tr>
+                  <td className="font-bold">FASE (50D)</td>
+                  <td className="font-bold text-green-700 font-mono">I &gt;&gt;</td>
+                  <td>Tempo Definido de Fase (I_def / 50D)</td>
+                  <td>{study.rele_fase.i_def > 0 ? `${study.rele_fase.i_def} A` : 'DESABILITADO'}</td>
+                  <td className="font-bold">{study.rele_fase.i_def > 0 ? `${(study.rele_fase.i_def / tcRatio).toFixed(2)} A` : '---'}</td>
+                  <td>{study.rele_fase.i_def > 0 ? `${study.rele_fase.t_def.toFixed(2)} s` : '---'}</td>
+                </tr>
+                <tr>
+                  <td className="font-bold">FASE (50)</td>
+                  <td className="font-bold text-green-700 font-mono">I &gt;&gt;&gt;</td>
+                  <td>Instantâneo de Fase</td>
+                  <td>{study.rele_fase.i_inst > 0 ? `${study.rele_fase.i_inst} A` : 'DESABILITADO'}</td>
+                  <td className="font-bold">{study.rele_fase.i_inst > 0 ? `${(study.rele_fase.i_inst / tcRatio).toFixed(2)} A` : '---'}</td>
+                  <td>Instantâneo (0.015 s)</td>
+                </tr>
+                <tr>
+                  <td className="font-bold">NEUTRO (51N)</td>
+                  <td className="font-bold text-green-700 font-mono">IN &gt;</td>
+                  <td>Partida Temporizada de Neutro</td>
+                  <td>{study.rele_neutro.pickup} A</td>
+                  <td className="font-bold">{(study.rele_neutro.pickup / tcRatio).toFixed(2)} A</td>
+                  <td>Curva {study.rele_neutro.curva.replace('IEC_', '')} / Dial {study.rele_neutro.tms}</td>
+                </tr>
+                <tr>
+                  <td className="font-bold">NEUTRO (50DN)</td>
+                  <td className="font-bold text-green-700 font-mono">IN &gt;&gt;</td>
+                  <td>Tempo Definido de Neutro (IN_def / 50DN)</td>
+                  <td>{study.rele_neutro.i_def > 0 ? `${study.rele_neutro.i_def} A` : 'DESABILITADO'}</td>
+                  <td className="font-bold">{study.rele_neutro.i_def > 0 ? `${(study.rele_neutro.i_def / tcRatio).toFixed(2)} A` : '---'}</td>
+                  <td>{study.rele_neutro.i_def > 0 ? `${study.rele_neutro.t_def.toFixed(2)} s` : '---'}</td>
+                </tr>
+                <tr>
+                  <td className="font-bold">NEUTRO (50N)</td>
+                  <td className="font-bold text-green-700 font-mono">IN &gt;&gt;&gt;</td>
+                  <td>Instantâneo de Neutro</td>
+                  <td>{study.rele_neutro.i_inst > 0 ? `${study.rele_neutro.i_inst} A` : 'DESABILITADO'}</td>
+                  <td className="font-bold">{study.rele_neutro.i_inst > 0 ? `${(study.rele_neutro.i_inst / tcRatio).toFixed(2)} A` : '---'}</td>
+                  <td>Instantâneo (0.015 s)</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        )}
       </section>
 
-      <section className="mb-4">
+      <section className="mb-4 report-block">
         <h3 className="report-section-title">5. Análise de Seletividade e Parecer</h3>
         <div className="p-3 border border-zinc-200 rounded text-[8px] space-y-1 bg-zinc-50 font-mono">
            {getTechnicalSuggestions(study).length === 0 ? (
@@ -1628,7 +1800,7 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
         </div>
       </section>
 
-      <section className="mb-4">
+      <section className="mb-4 report-block">
         <h3 className="report-section-title">6. Normas Técnicas Utilizadas</h3>
         <div className="p-3 border border-zinc-200 rounded bg-zinc-50">
            <ul className="grid grid-cols-2 gap-x-6 gap-y-1 text-[8px] font-mono text-zinc-600 uppercase list-disc list-inside">
@@ -1639,11 +1811,11 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
         </div>
       </section>
 
-      <section className="mt-8">
+      <section className="mt-8 report-block">
         <div className="grid grid-cols-2 gap-12 text-[9px] text-center pt-8">
            <div className="border-t border-zinc-400 pt-2">
              <p className="font-bold uppercase">{study.rt_nome}</p>
-             <p className="text-zinc-400 uppercase text-[7px]">Engenheiro Responsável / CREA</p>
+             <p className="text-zinc-400 uppercase text-[7px]">Responsável Técnico / CREA/CRT</p>
            </div>
            <div className="border-t border-zinc-400 pt-2">
              <p className="font-bold uppercase">Cliente / Representante</p>

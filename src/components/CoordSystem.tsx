@@ -396,11 +396,27 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     const pickupNeutro = Math.ceil(pickupFase * 0.2);
     const instFase = Number((Inom * 12.5).toFixed(2));
     const instNeutro = Number((Inom * 4.0).toFixed(2));
+    const defFase = Number((Inom * 5.0).toFixed(2));
+    const defNeutro = Number((Inom * 1.5).toFixed(2));
+    const tDefFase = 0.30;
+    const tDefNeutro = 0.30;
     
     setStudy(prev => ({
       ...prev,
-      rele_fase: { ...prev.rele_fase, pickup: pickupFase, i_inst: instFase },
-      rele_neutro: { ...prev.rele_neutro, pickup: pickupNeutro, i_inst: instNeutro }
+      rele_fase: { 
+        ...prev.rele_fase, 
+        pickup: pickupFase, 
+        i_def: defFase, 
+        t_def: tDefFase,
+        i_inst: instFase 
+      },
+      rele_neutro: { 
+        ...prev.rele_neutro, 
+        pickup: pickupNeutro, 
+        i_def: defNeutro, 
+        t_def: tDefNeutro,
+        i_inst: instNeutro 
+      }
     }));
 
     // Acionar a explicação visual
@@ -1006,7 +1022,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     </div>
                     <div className="grid grid-cols-2 gap-4">
                       <div>
-                        <FieldInfo label="CREA" description="Registro no Conselho Regional de Engenharia e Agronomia." />
+                        <FieldInfo label="CREA/CRT" description="Registro no Conselho de Engenharia (CREA) ou de Técnicos Industriais (CRT)." />
                         <input 
                           type="text" 
                           value={study.rt_crea}
@@ -1848,76 +1864,166 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                       )}
                     </div>
                   </div>
-                     {/* Parâmetros Finais de Ajuste do Relé (Especial Pextron / Geral) */}
-                     <div className="mt-6 p-4 rounded-lg bg-zinc-950 border border-zinc-800/80 space-y-3">
-                       <div className="flex justify-between items-center border-b border-zinc-800/60 pb-2">
-                         <div className="flex items-center gap-2">
-                           <Cpu className="w-4 h-4 text-green-500 animate-pulse" />
-                           <h4 className="text-[11px] font-bold text-zinc-100 uppercase tracking-wider font-mono">
-                             Parâmetros Finais de Ajuste {study.rele_marca === 'Pextron' ? `(Pextron ${study.rele_modelo || 'URPE'})` : `(${study.rele_marca || 'Relé Multifunção'})`}
-                           </h4>
-                         </div>
-                         {study.rele_marca === 'Pextron' && (
-                           <span className="text-[8px] bg-green-500/20 text-green-400 px-2.5 py-0.5 rounded font-black border border-green-500/30 uppercase font-mono">Linha Pextron</span>
-                         )}
-                       </div>
+                      {/* Parâmetros Finais de Ajuste do Relé (Especial Pextron / Geral) */}
+                      {(() => {
+                        const tcParts = study.tc_relacao?.split('/') || ['50', '5'];
+                        const tcPrimary = parseFloat(tcParts[0]) || 50;
+                        const tcSecondary = parseFloat(tcParts[1]) || 5;
+                        const rtc = tcPrimary / tcSecondary;
+                        const isPextron = study.rele_marca === 'Pextron';
 
-                       <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-[10px]">
-                         {/* Grupo Fase */}
-                         <div className="space-y-2">
-                           <p className="font-bold text-green-400 uppercase tracking-widest text-[8px] border-b border-green-900/10 pb-1 font-mono">Elemento de Fase (51 / 50D / 50)</p>
-                           <div className="grid grid-cols-2 gap-2 font-mono">
-                             <div className="bg-black/60 p-2 border border-zinc-900 rounded">
-                               <span className="text-[8px] text-zinc-500 block uppercase">51 Partida (A)</span>
-                               <span className="text-zinc-300 font-bold">{study.rele_fase.pickup} A</span>
-                             </div>
-                             <div className="bg-black/60 p-2 border border-zinc-900 rounded">
-                               <span className="text-[8px] text-zinc-500 block uppercase">51 Curva / TMS</span>
-                               <span className="text-zinc-300 font-bold">{study.rele_fase.curva.replace('IEC_', '').replace('ANSI_', '')} / Dial {study.rele_fase.tms}</span>
-                             </div>
-                             <div className="bg-black/60 p-2 border border-zinc-900 rounded">
-                               <span className="text-[8px] text-zinc-500 block uppercase">50D Partida (A)</span>
-                               <span className="text-green-400 font-bold">{study.rele_fase.i_def > 0 ? `${study.rele_fase.i_def} A` : 'DESABILITADO'}</span>
-                             </div>
-                             <div className="bg-black/60 p-2 border border-zinc-900 rounded">
-                               <span className="text-[8px] text-zinc-500 block uppercase">50D Tempo (s)</span>
-                               <span className="text-green-400 font-bold">{study.rele_fase.i_def > 0 ? `${study.rele_fase.t_def} s` : '---'}</span>
-                             </div>
-                             <div className="bg-black/60 p-2 border border-zinc-900 col-span-2 rounded">
-                               <span className="text-[8px] text-zinc-500 block uppercase">50 Instantâneo (A)</span>
-                               <span className="text-zinc-300 font-bold">{study.rele_fase.i_inst > 0 ? `${study.rele_fase.i_inst} A` : 'DESABILITADO'}</span>
-                             </div>
-                           </div>
-                         </div>
+                        return (
+                          <div className="mt-6 p-4 rounded-lg bg-zinc-950 border border-zinc-800/80 space-y-3">
+                            <div className="flex justify-between items-center border-b border-zinc-800/60 pb-2">
+                              <div className="flex items-center gap-2">
+                                <Cpu className="w-4 h-4 text-green-500 animate-pulse" />
+                                <h4 className="text-[11px] font-bold text-zinc-100 uppercase tracking-wider font-mono">
+                                  Parâmetros Finais de Ajuste {isPextron ? `(Pextron ${study.rele_modelo || 'URPE'})` : `(${study.rele_marca || 'Relé Multifunção'})`}
+                                </h4>
+                              </div>
+                              {isPextron && (
+                                <span className="text-[8px] bg-green-500/20 text-green-400 px-2.5 py-0.5 rounded font-black border border-green-500/30 uppercase font-mono">Linha Pextron</span>
+                              )}
+                            </div>
 
-                         {/* Grupo Neutro */}
-                         <div className="space-y-2">
-                           <p className="font-bold text-blue-400 uppercase tracking-widest text-[8px] border-b border-blue-900/10 pb-1 font-mono">Elemento de Neutro (51N / 50DN / 50N)</p>
-                           <div className="grid grid-cols-2 gap-2 font-mono">
-                             <div className="bg-black/60 p-2 border border-zinc-900 rounded">
-                               <span className="text-[8px] text-zinc-500 block uppercase">51N Partida (A)</span>
-                               <span className="text-zinc-300 font-bold">{study.rele_neutro.pickup} A</span>
-                             </div>
-                             <div className="bg-black/60 p-2 border border-zinc-900 rounded">
-                               <span className="text-[8px] text-zinc-500 block uppercase">51N Curva / TMS</span>
-                               <span className="text-zinc-300 font-bold">{study.rele_neutro.curva.replace('IEC_', '').replace('ANSI_', '')} / Dial {study.rele_neutro.tms}</span>
-                             </div>
-                             <div className="bg-black/60 p-2 border border-zinc-900 rounded">
-                               <span className="text-[8px] text-zinc-500 block uppercase">50DN Partida (A)</span>
-                               <span className="text-blue-400 font-bold">{study.rele_neutro.i_def > 0 ? `${study.rele_neutro.i_def} A` : 'DESABILITADO'}</span>
-                             </div>
-                             <div className="bg-black/60 p-2 border border-zinc-900 rounded">
-                               <span className="text-[8px] text-zinc-500 block uppercase">50DN Tempo (s)</span>
-                               <span className="text-blue-400 font-bold">{study.rele_neutro.i_def > 0 ? `${study.rele_neutro.t_def} s` : '---'}</span>
-                             </div>
-                             <div className="bg-black/60 p-2 border border-zinc-900 col-span-2 rounded">
-                               <span className="text-[8px] text-zinc-500 block uppercase">50N Instantâneo (A)</span>
-                               <span className="text-zinc-300 font-bold">{study.rele_neutro.i_inst > 0 ? `${study.rele_neutro.i_inst} A` : 'DESABILITADO'}</span>
-                             </div>
-                           </div>
-                         </div>
-                       </div>
-                     </div>
+                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4 text-[10px]">
+                              {/* Grupo Fase */}
+                              <div className="space-y-2">
+                                <p className="font-bold text-green-400 uppercase tracking-widest text-[8px] border-b border-green-900/10 pb-1 font-mono">
+                                  {isPextron ? 'Elemento de Fase (Canais I>, I>>, I>>>)' : 'Elemento de Fase (51 / 50D / 50)'}
+                                </p>
+                                <div className="grid grid-cols-2 gap-2 font-mono">
+                                  <div className="bg-black/60 p-2 border border-zinc-900 rounded">
+                                    <span className="text-[7px] text-zinc-500 block uppercase">
+                                      {isPextron ? 'I> Partida (Primário)' : '51 Partida (Primário)'}
+                                    </span>
+                                    <span className="text-zinc-300 font-bold">{study.rele_fase.pickup} A</span>
+                                  </div>
+                                  <div className="bg-black/60 p-2 border border-zinc-900 rounded">
+                                    <span className="text-[7px] text-green-500/80 block uppercase font-bold">
+                                      {isPextron ? 'I> Ajuste Secundário' : '51 Partida (Secundário)'}
+                                    </span>
+                                    <span className="text-green-400 font-bold">{(study.rele_fase.pickup / rtc).toFixed(2)} A</span>
+                                  </div>
+                                  <div className="bg-black/60 p-2 border border-zinc-900 col-span-2 rounded">
+                                    <span className="text-[7px] text-zinc-500 block uppercase">
+                                      {isPextron ? 'I> Curva / Dial de Tempo (Dt)' : '51 Curva / TMS (Dial)'}
+                                    </span>
+                                    <span className="text-zinc-300 font-bold">
+                                      {study.rele_fase.curva.replace('IEC_', '').replace('ANSI_', '')} / Dial {study.rele_fase.tms}
+                                    </span>
+                                  </div>
+
+                                  <div className="bg-black/60 p-2 border border-zinc-900 rounded">
+                                    <span className="text-[7px] text-zinc-500 block uppercase">
+                                      {isPextron ? 'I>> Tempo Definido (Primário)' : '50D Partida (Primário)'}
+                                    </span>
+                                    <span className="text-zinc-300 font-bold">{study.rele_fase.i_def > 0 ? `${study.rele_fase.i_def} A` : 'DESABILITADO'}</span>
+                                  </div>
+                                  <div className="bg-black/60 p-2 border border-zinc-900 rounded">
+                                    <span className="text-[7px] text-green-500/80 block uppercase font-bold">
+                                      {isPextron ? 'I>> Ajuste Secundário' : '50D Partida (Secundário)'}
+                                    </span>
+                                    <span className="text-green-400 font-bold">
+                                      {study.rele_fase.i_def > 0 ? `${(study.rele_fase.i_def / rtc).toFixed(2)} A` : '---'}
+                                    </span>
+                                  </div>
+                                  <div className="bg-black/60 p-2 border border-zinc-900 col-span-2 rounded">
+                                    <span className="text-[7px] text-zinc-500 block uppercase">
+                                      {isPextron ? 'tI>> Tempo Ajustado (s)' : '50D Tempo Definido (s)'}
+                                    </span>
+                                    <span className="text-green-400 font-bold">
+                                      {study.rele_fase.i_def > 0 ? `${study.rele_fase.t_def.toFixed(2)} s` : '---'}
+                                    </span>
+                                  </div>
+
+                                  <div className="bg-black/60 p-2 border border-zinc-900 rounded">
+                                    <span className="text-[7px] text-zinc-500 block uppercase">
+                                      {isPextron ? 'I>>> Instantâneo (Primário)' : '50 Instantâneo (Primário)'}
+                                    </span>
+                                    <span className="text-zinc-300 font-bold">{study.rele_fase.i_inst > 0 ? `${study.rele_fase.i_inst} A` : 'DESABILITADO'}</span>
+                                  </div>
+                                  <div className="bg-black/60 p-2 border border-zinc-900 rounded">
+                                    <span className="text-[7px] text-green-500/80 block uppercase font-bold">
+                                      {isPextron ? 'I>>> Ajuste Secundário' : '50 Instantâneo (Secundário)'}
+                                    </span>
+                                    <span className="text-green-400 font-bold">
+                                      {study.rele_fase.i_inst > 0 ? `${(study.rele_fase.i_inst / rtc).toFixed(2)} A` : '---'}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+
+                              {/* Grupo Neutro */}
+                              <div className="space-y-2">
+                                <p className="font-bold text-blue-400 uppercase tracking-widest text-[8px] border-b border-blue-900/10 pb-1 font-mono">
+                                  {isPextron ? 'Elemento de Neutro (Canais IN>, IN>>, IN>>>)' : 'Elemento de Neutro (51N / 50DN / 50N)'}
+                                </p>
+                                <div className="grid grid-cols-2 gap-2 font-mono">
+                                  <div className="bg-black/60 p-2 border border-zinc-900 rounded">
+                                    <span className="text-[7px] text-zinc-500 block uppercase">
+                                      {isPextron ? 'IN> Partida (Primário)' : '51N Partida (Primário)'}
+                                    </span>
+                                    <span className="text-zinc-300 font-bold">{study.rele_neutro.pickup} A</span>
+                                  </div>
+                                  <div className="bg-black/60 p-2 border border-zinc-900 rounded">
+                                    <span className="text-[7px] text-blue-500/80 block uppercase font-bold">
+                                      {isPextron ? 'IN> Ajuste Secundário' : '51N Partida (Secundário)'}
+                                    </span>
+                                    <span className="text-blue-400 font-bold">{(study.rele_neutro.pickup / rtc).toFixed(2)} A</span>
+                                  </div>
+                                  <div className="bg-black/60 p-2 border border-zinc-900 col-span-2 rounded">
+                                    <span className="text-[7px] text-zinc-500 block uppercase">
+                                      {isPextron ? 'IN> Curva / Dial de Tempo (Dt)' : '51N Curva / TMS (Dial)'}
+                                    </span>
+                                    <span className="text-zinc-300 font-bold">
+                                      {study.rele_neutro.curva.replace('IEC_', '').replace('ANSI_', '')} / Dial {study.rele_neutro.tms}
+                                    </span>
+                                  </div>
+
+                                  <div className="bg-black/60 p-2 border border-zinc-900 rounded">
+                                    <span className="text-[7px] text-zinc-500 block uppercase">
+                                      {isPextron ? 'IN>> Tempo Definido (Primário)' : '50DN Partida (Primário)'}
+                                    </span>
+                                    <span className="text-zinc-300 font-bold">{study.rele_neutro.i_def > 0 ? `${study.rele_neutro.i_def} A` : 'DESABILITADO'}</span>
+                                  </div>
+                                  <div className="bg-black/60 p-2 border border-zinc-900 rounded">
+                                    <span className="text-[7px] text-blue-500/80 block uppercase font-bold">
+                                      {isPextron ? 'IN>> Ajuste Secundário' : '50DN Partida (Secundário)'}
+                                    </span>
+                                    <span className="text-blue-400 font-bold">
+                                      {study.rele_neutro.i_def > 0 ? `${(study.rele_neutro.i_def / rtc).toFixed(2)} A` : '---'}
+                                    </span>
+                                  </div>
+                                  <div className="bg-black/60 p-2 border border-zinc-900 col-span-2 rounded">
+                                    <span className="text-[7px] text-zinc-500 block uppercase">
+                                      {isPextron ? 'tIN>> Tempo Ajustado (s)' : '50DN Tempo Definido (s)'}
+                                    </span>
+                                    <span className="text-blue-400 font-bold">
+                                      {study.rele_neutro.i_def > 0 ? `${study.rele_neutro.t_def.toFixed(2)} s` : '---'}
+                                    </span>
+                                  </div>
+
+                                  <div className="bg-black/60 p-2 border border-zinc-900 rounded">
+                                    <span className="text-[7px] text-zinc-500 block uppercase">
+                                      {isPextron ? 'IN>>> Instantâneo (Primário)' : '50N Instantâneo (Primário)'}
+                                    </span>
+                                    <span className="text-zinc-300 font-bold">{study.rele_neutro.i_inst > 0 ? `${study.rele_neutro.i_inst} A` : 'DESABILITADO'}</span>
+                                  </div>
+                                  <div className="bg-black/60 p-2 border border-zinc-900 rounded">
+                                    <span className="text-[7px] text-blue-500/80 block uppercase font-bold">
+                                      {isPextron ? 'IN>>> Ajuste Secundário' : '50N Instantâneo (Secundário)'}
+                                    </span>
+                                    <span className="text-blue-400 font-bold">
+                                      {study.rele_neutro.i_inst > 0 ? `${(study.rele_neutro.i_inst / rtc).toFixed(2)} A` : '---'}
+                                    </span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })()}
                   </section>
                  <section className="bg-zinc-900/30 p-5 rounded-lg border border-zinc-800">
                   <h3 className="text-xs font-bold flex items-center gap-2 text-blue-400 mb-4 uppercase">
