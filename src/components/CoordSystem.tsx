@@ -2693,6 +2693,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
           onClose={() => setShowReport(false)}
           curves={curves}
           specialPoints={specialPoints}
+          userEmail={user?.email}
         />
       )}
 

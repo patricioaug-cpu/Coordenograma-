@@ -11,11 +11,15 @@ interface ReportProps {
   onClose: () => void;
   curves: any[];
   specialPoints: any[];
+  userEmail?: string;
 }
 
-export const ReportView: React.FC<ReportProps> = ({ study, concessionaria, onClose, curves, specialPoints }) => {
+export const ReportView: React.FC<ReportProps> = ({ study, concessionaria, onClose, curves, specialPoints, userEmail }) => {
   const reportRef = useRef<HTMLDivElement>(null);
   const [previewScale, setPreviewScale] = React.useState(1);
+  const [showLogo, setShowLogo] = React.useState(true);
+
+  const isAuthorizedEmail = userEmail === 'startupeletricatelecon@gmail.com' || userEmail === 'patricioaug@gmail.com';
 
   React.useEffect(() => {
     const calculateScale = () => {
@@ -546,6 +550,22 @@ Versão do Sistema: 1.1.0 PRO
                <h2 className="text-xs sm:text-sm font-bold uppercase tracking-tight truncate">Relatório Técnico</h2>
                <p className="text-[9px] sm:text-[10px] text-[#a1a1aa] uppercase font-mono truncate">{study.projeto}</p>
              </div>
+             
+             {isAuthorizedEmail && (
+               <div className="flex items-center gap-2 bg-[#27272a] px-3 py-1.5 rounded border border-[#3f3f46] select-none hover:bg-[#3f3f46] transition-colors shrink-0 mx-2">
+                 <input 
+                   type="checkbox" 
+                   id="toggle-logo-top" 
+                   checked={showLogo}
+                   onChange={(e) => setShowLogo(e.target.checked)}
+                   className="w-3.5 h-3.5 text-green-600 bg-zinc-800 border-zinc-700 rounded focus:ring-green-500 accent-green-500 cursor-pointer"
+                 />
+                 <label htmlFor="toggle-logo-top" className="text-[10px] font-bold text-zinc-300 uppercase tracking-wider cursor-pointer">
+                   Logotipo Startup
+                 </label>
+               </div>
+             )}
+
              <div className="md:hidden">
                 <button 
                   onClick={onClose}
@@ -595,9 +615,9 @@ Versão do Sistema: 1.1.0 PRO
             style={{ width: '210mm', minHeight: '297mm', boxSizing: 'border-box' }}
           >
             {concessionaria?.id === 'cemig_mg' ? (
-              <CemigReport study={study} concessionaria={concessionaria} curves={curves} specialPoints={specialPoints} />
+              <CemigReport study={study} curves={curves} specialPoints={specialPoints} showLogo={showLogo} />
             ) : (
-              <StandardReport study={study} concessionaria={concessionaria} curves={curves} specialPoints={specialPoints} />
+              <StandardReport study={study} concessionaria={concessionaria} curves={curves} specialPoints={specialPoints} showLogo={showLogo} />
             )}
           </div>
         </div>
@@ -605,6 +625,23 @@ Versão do Sistema: 1.1.0 PRO
 
       {/* Final Controls - Bottom */}
       <div className="fixed bottom-4 left-1/2 -translate-x-1/2 bg-[#18181be6] backdrop-blur-md border border-[#3f3f46] px-4 py-2.5 rounded-full shadow-2xl flex items-center gap-3 sm:gap-6 z-[60] no-print max-w-[95vw]">
+          {isAuthorizedEmail && (
+            <>
+              <div className="flex items-center gap-1.5 select-none text-[#d4d4d8] hover:text-[#fafafa] transition-colors">
+                <input 
+                  type="checkbox" 
+                  id="toggle-logo-bottom" 
+                  checked={showLogo}
+                  onChange={(e) => setShowLogo(e.target.checked)}
+                  className="w-3.5 h-3.5 text-green-600 bg-zinc-800 border-zinc-700 rounded focus:ring-green-500 accent-green-500 cursor-pointer"
+                />
+                <label htmlFor="toggle-logo-bottom" className="text-[8px] sm:text-[10px] font-bold uppercase cursor-pointer">
+                  Logotipo
+                </label>
+              </div>
+              <div className="w-px h-6 bg-[#3f3f46]"></div>
+            </>
+          )}
           <button 
             onClick={handleCopyData}
             className="flex flex-col items-center gap-1 text-[#d4d4d8] hover:text-[#fafafa] transition-colors"
@@ -651,7 +688,8 @@ const getCurveParams = (curveType: string) => {
   };
 };
 
-const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) => {
+const StandardReport = ({ study, concessionaria, curves, specialPoints, showLogo = false }: any) => {
+  const [logoError, setLogoError] = React.useState(false);
   const In = (study.trafo_kva * (study.trafo_qtd || 1)) / (Math.sqrt(3) * study.trafo_v_prim / 1000);
   const tcRatioStr = study.tc_relacao || '50/5';
   const InomPlanta = calculateInPlant(study.demanda_nova, study.trafo_v_prim, study.fator_potencia);
@@ -749,7 +787,16 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
       {/* Header */}
       <div className="flex justify-between items-center border-b-2 border-black pb-4 mb-6">
         <div className="flex items-center gap-4">
-          <Shield className="w-10 h-10 text-black" />
+          {showLogo && !logoError ? (
+            <img 
+              src="/LOGO-START.jpg" 
+              alt="Logo Startup" 
+              className="h-11 w-auto object-contain max-h-12 shrink-0" 
+              onError={() => setLogoError(true)}
+            />
+          ) : (
+            <Shield className="w-10 h-10 text-black shrink-0" />
+          )}
           <div>
             <h1 className="text-xl font-black uppercase tracking-tight">Estudo de Coordenação e Seletividade</h1>
             <p className="text-[9px] text-zinc-500 font-bold uppercase tracking-widest leading-none mt-1">Memorial Descritivo e de Cálculo</p>
@@ -1229,7 +1276,8 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
   );
 };
 
-const CemigReport = ({ study, curves, specialPoints }: any) => {
+const CemigReport = ({ study, curves, specialPoints, showLogo = false }: any) => {
+  const [logoError, setLogoError] = React.useState(false);
   const In = (study.trafo_kva * (study.trafo_qtd || 1)) / (Math.sqrt(3) * study.trafo_v_prim / 1000);
   const InomPlant = (study.demanda_nova) / (study.trafo_v_prim * Math.sqrt(3) * study.fator_potencia / 1000);
   const tcRatioStr = study.tc_relacao || '50/5';
@@ -1323,7 +1371,17 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
 
   return (
     <div className="text-black font-sans leading-tight">
-      <div className="flex justify-between items-start border-b-2 border-black pb-4 mb-4">
+      <div className="flex justify-between items-center border-b-2 border-black pb-4 mb-4">
+         {showLogo && !logoError ? (
+           <div className="flex-shrink-0 mr-4">
+             <img 
+               src="/LOGO-START.jpg" 
+               alt="Logo Startup" 
+               className="h-11 w-auto object-contain max-h-12 shrink-0" 
+               onError={() => setLogoError(true)}
+             />
+           </div>
+         ) : null}
          <div className="text-right w-full">
            <h1 className="text-lg font-extrabold uppercase">Memorial de Proteção - Cemig MG</h1>
            <p className="text-[8px] text-zinc-500 uppercase tracking-widest">Atendimento à Norma Técnica ND 5.3</p>
