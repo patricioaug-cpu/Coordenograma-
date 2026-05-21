@@ -792,6 +792,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints, showLogo
               src="/LOGO-START.jpg" 
               alt="Logo Startup" 
               className="h-11 w-auto object-contain max-h-12 shrink-0" 
+              referrerPolicy="no-referrer"
               onError={() => setLogoError(true)}
             />
           ) : (
@@ -1378,6 +1379,7 @@ const CemigReport = ({ study, curves, specialPoints, showLogo = false }: any) =>
                src="/LOGO-START.jpg" 
                alt="Logo Startup" 
                className="h-11 w-auto object-contain max-h-12 shrink-0" 
+               referrerPolicy="no-referrer"
                onError={() => setLogoError(true)}
              />
            </div>
