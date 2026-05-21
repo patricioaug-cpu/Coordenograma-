@@ -1,11 +1,9 @@
 import React, { useRef } from 'react';
 import { createPortal } from 'react-dom';
 import { CoordChart } from './CoordChart';
-import { Copy, Printer, X, FileText, Shield, Info, Zap, AlertTriangle, FileDown } from 'lucide-react';
+import { Copy, Printer, X, FileText, Shield, Info, Zap, AlertTriangle } from 'lucide-react';
 import { Concessionaria } from '../constants/concessionarias';
 import { getTechnicalSuggestions, calculateInominal, calculateInPlant, validateTC, calculateTime, calculateActualRelayTime, CURVE_CONSTANTS, CurveType } from '../lib/protection-utils';
-import { toPng } from 'html-to-image';
-import { jsPDF } from 'jspdf';
 
 interface ReportProps {
   study: any;
@@ -18,7 +16,6 @@ interface ReportProps {
 export const ReportView: React.FC<ReportProps> = ({ study, concessionaria, onClose, curves, specialPoints }) => {
   const reportRef = useRef<HTMLDivElement>(null);
   const [previewScale, setPreviewScale] = React.useState(1);
-  const [isGeneratingPdf, setIsGeneratingPdf] = React.useState(false);
 
   React.useEffect(() => {
     const calculateScale = () => {
@@ -37,87 +34,6 @@ export const ReportView: React.FC<ReportProps> = ({ study, concessionaria, onClo
     window.addEventListener('resize', calculateScale);
     return () => window.removeEventListener('resize', calculateScale);
   }, []);
-
-  const handleExportPDF = async () => {
-    if (!reportRef.current) return;
-    
-    setIsGeneratingPdf(true);
-    
-    try {
-      // Pequeno delay para garantir que tudo está renderizado
-      await new Promise(resolve => setTimeout(resolve, 600));
-      
-      const reportElement = reportRef.current;
-      if (!reportElement) return;
-
-      const pdf = new jsPDF({
-        orientation: 'p',
-        unit: 'mm',
-        format: 'a4',
-      });
-
-      const pageWidth = pdf.internal.pageSize.getWidth();
-      const pageHeight = pdf.internal.pageSize.getHeight();
-      
-      const leftMargin = 20; // Margem esquerda 20mm (2cm) conforme padrão de engenharia
-      const rightMargin = 20; // Margem direita 20mm (2cm)
-      const vMargin = 20; // Margem superior/inferior 20mm (2cm)
-      const contentWidth = pageWidth - leftMargin - rightMargin;
-      const pageInnerHeight = pageHeight - (2 * vMargin);
-
-      // Fator de escala para garantir que o relatório longo seja capturado sem erros de memória
-      const dataUrl = await toPng(reportElement, {
-        pixelRatio: 1.5, // 1.5 é um bom equilíbrio entre qualidade e tamanho de arquivo
-        backgroundColor: '#ffffff',
-        filter: (node: any) => {
-          if (node.classList && (node.classList.contains('no-print') || node.classList.contains('report-portal-wrapper'))) {
-            return false;
-          }
-          return true;
-        },
-        style: {
-          transform: 'none',
-          margin: '0',
-          padding: '0',
-          width: `${reportElement.offsetWidth}px`, // Mantém a largura original para não distorcer
-        }
-      });
-
-      if (!dataUrl) throw new Error("Falha ao capturar imagem do relatório");
-
-      const imgProps = pdf.getImageProperties(dataUrl);
-      const contentHeight = (imgProps.height * contentWidth) / imgProps.width;
-      
-      let heightLeft = contentHeight;
-      let yOffset = 0;
-
-      while (heightLeft > 0) {
-        // Clipping region: Define onde o PDF pode desenhar nesta página
-        pdf.saveGraphicsState();
-        pdf.rect(leftMargin, vMargin, contentWidth, pageInnerHeight);
-        pdf.clip();
-
-        // Adiciona a imagem deslocada: o yOffset controla qual parte do relatório aparece
-        pdf.addImage(dataUrl, 'PNG', leftMargin, vMargin + yOffset, contentWidth, contentHeight, undefined, 'FAST');
-        
-        pdf.restoreGraphicsState();
-        
-        heightLeft -= pageInnerHeight;
-        
-        if (heightLeft > 0) {
-          pdf.addPage();
-          yOffset -= pageInnerHeight;
-        }
-      }
-
-      pdf.save(`relatorio-seletividade-${study.projeto.replace(/\s+/g, '-').toLowerCase()}.pdf`);
-    } catch (error) {
-      console.error('Erro ao gerar PDF:', error);
-      alert('Ocorreu um erro ao gerar o PDF. Tente usar a função Imprimir (Salvar como PDF) do navegador.');
-    } finally {
-      setIsGeneratingPdf(false);
-    }
-  };
 
   const handleCopyData = () => {
     const equipamentosRef = study.equipamentos.map((eq: any) => 
@@ -304,8 +220,8 @@ Versão do Sistema: 1.1.0 PRO
             box-shadow: none !important;
             border-color: #000 !important;
           }
-          /* Override inline styles for preview scaling during print */
-          .report-portal-wrapper div:not(#printable-report) {
+          /* Override inline styles for preview scaling during print, excluding elements hidden via no-print */
+          .report-portal-wrapper div:not(#printable-report):not(.no-print):not([class*="no-print"]) {
             transform: none !important;
             margin: 0 !important;
             padding: 0 !important;
@@ -315,8 +231,17 @@ Versão do Sistema: 1.1.0 PRO
             position: static !important;
           }
           /* Ensure no-print items inside the portal are actually hidden */
-          .report-portal-wrapper .no-print {
+          .report-portal-wrapper .no-print,
+          .report-portal-wrapper [class*="no-print"] {
             display: none !important;
+            visibility: hidden !important;
+            opacity: 0 !important;
+            height: 0 !important;
+            width: 0 !important;
+            padding: 0 !important;
+            margin: 0 !important;
+            border: none !important;
+            overflow: hidden !important;
           }
           #printable-report {
             display: block !important;
@@ -336,9 +261,8 @@ Versão do Sistema: 1.1.0 PRO
           #printable-report table {
             table-layout: fixed !important;
             width: 100% !important;
-            page-break-inside: avoid !important;
-            break-inside: avoid !important;
-            break-inside: avoid-page !important;
+            page-break-inside: auto !important;
+            break-inside: auto !important;
           }
           #printable-report * {
             max-width: 100% !important;
@@ -351,8 +275,16 @@ Versão do Sistema: 1.1.0 PRO
             break-inside: auto !important;
           }
           
-          /* Garante que blocos de cálculo individuais, tabelas, coordenogramas e assinaturas não quebrem */
-          .report-block, .calc-table, .calc-box, .coord-chart-container, table, tr, .signature-block, .rt-signature {
+          /* Permite que tabelas compridas quebrem de página de forma limpa, mas os tr internos não quebram */
+          #printable-report table,
+          .calc-table,
+          .report-table {
+            page-break-inside: auto !important;
+            break-inside: auto !important;
+          }
+          
+          /* Garante que blocos de cálculo individuais, linhas de tabelas, coordenogramas e assinaturas não quebrem no meio */
+          .report-block, .calc-box, .coord-chart-container, tr, .signature-block, .rt-signature {
             page-break-inside: avoid !important;
             break-inside: avoid-page !important;
             break-inside: avoid !important;
@@ -598,25 +530,12 @@ Versão do Sistema: 1.1.0 PRO
                 </button>
              </div>
           </div>
-          <div className="grid grid-cols-3 md:flex gap-1.5 md:gap-4 w-full md:w-auto items-center">
+          <div className="grid grid-cols-2 md:flex gap-1.5 md:gap-4 w-full md:w-auto items-center">
             <button 
               onClick={handleCopyData}
               className="flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-2 py-2 sm:px-6 sm:py-2.5 bg-[#27272a] hover:bg-[#3f3f46] text-[#fafafa] font-bold text-[9px] sm:text-xs rounded border border-[#3f3f46] transition-all"
             >
               <Copy className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> <span className="truncate">COPIAR</span>
-            </button>
-            <button 
-              onClick={handleExportPDF}
-              disabled={isGeneratingPdf}
-              className={`flex flex-col sm:flex-row items-center justify-center gap-1 sm:gap-2 px-1 py-2 sm:px-6 sm:py-2.5 bg-[#4b5563] hover:bg-[#374151] text-white font-bold text-[9px] sm:text-xs rounded border border-[#6b7280] transition-all ${isGeneratingPdf ? 'opacity-50 cursor-not-allowed' : ''}`}
-            >
-              {isGeneratingPdf ? (
-                <span className="truncate">GERANDO...</span>
-              ) : (
-                <>
-                  <FileDown className="w-3.5 h-3.5 sm:w-4 sm:h-4" /> <span className="truncate">PDF</span>
-                </>
-              )}
             </button>
             <button 
               onClick={() => window.print()}
@@ -667,15 +586,6 @@ Versão do Sistema: 1.1.0 PRO
           >
             <Copy className="w-4 h-4 sm:w-4 sm:h-4" />
             <span className="text-[8px] sm:text-[10px] font-bold uppercase">Copiar</span>
-          </button>
-          <div className="w-px h-6 bg-[#3f3f46]"></div>
-          <button 
-            onClick={handleExportPDF}
-            disabled={isGeneratingPdf}
-            className={`flex flex-col items-center gap-1 text-[#d4d4d8] hover:text-[#fafafa] transition-colors ${isGeneratingPdf ? 'opacity-50' : ''}`}
-          >
-            <FileDown className="w-4 h-4 sm:w-4 sm:h-4" />
-            <span className="text-[8px] sm:text-[10px] font-bold uppercase">{isGeneratingPdf ? '...' : 'PDF'}</span>
           </button>
           <div className="w-px h-6 bg-[#3f3f46]"></div>
           <button 
@@ -1109,7 +1019,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
       </section>
 
       {/* Seção 4: Ajustes de Proteção */}
-      <section className="mb-6 report-block">
+      <section className="mb-6 report-section">
         <h3 className="report-section-title">4. Tabela de Ajustes (ANSI 50/51/50D)</h3>
         <table className="report-table">
           <thead>
@@ -1278,16 +1188,16 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints }: any) =
       </section>
 
       {/* Assinaturas */}
-      <div className="mt-12 flex justify-between px-12 signature-block">
-        <div className="text-center">
-          <div className="w-[180px] border-t border-black mb-1"></div>
-          <p className="text-[9px] font-black uppercase">{study.rt_nome}</p>
-          <p className="text-[7px] text-zinc-400">Responsável Técnico / CREA/CRT</p>
+      <div className="mt-16 grid grid-cols-2 gap-x-24 gap-y-12 max-w-2xl mx-auto pt-16 signature-block">
+        <div className="text-center flex flex-col items-center">
+          <div className="w-[180px] border-t border-black mb-1.5"></div>
+          <p className="text-[9px] font-black uppercase leading-tight">{study.rt_nome}</p>
+          <p className="text-[7px] text-zinc-500 uppercase mt-0.5">Responsável Técnico / CREA/CRT</p>
         </div>
-        <div className="text-center">
-          <div className="w-[180px] border-t border-black mb-1"></div>
-          <p className="text-[9px] font-black uppercase">Responsável Legal</p>
-          <p className="text-[7px] text-zinc-400 font-mono">{study.cnpj_proprietario}</p>
+        <div className="text-center flex flex-col items-center">
+          <div className="w-[180px] border-t border-black mb-1.5"></div>
+          <p className="text-[9px] font-black uppercase leading-tight">Responsável Legal</p>
+          <p className="text-[7px] text-zinc-400 font-mono mt-0.5">{study.cnpj_proprietario}</p>
         </div>
       </div>
     </div>
@@ -1672,7 +1582,7 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
         <p className="text-[7px] text-zinc-400 mt-2 uppercase text-center font-mono italic">Curvas de proteção conforme parâmetros técnicos da ND 5.3.</p>
       </section>
 
-      <section className="mb-4 report-block">
+      <section className="mb-4 report-section">
         <h3 className="report-section-title">4. Ajustes do Relé de Proteção (ANSI 50/51/50D)</h3>
         <table className="report-table">
           <thead>
@@ -1811,15 +1721,17 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
         </div>
       </section>
 
-      <section className="mt-8 report-block">
-        <div className="grid grid-cols-2 gap-12 text-[9px] text-center pt-8">
-           <div className="border-t border-zinc-400 pt-2">
-             <p className="font-bold uppercase">{study.rt_nome}</p>
-             <p className="text-zinc-400 uppercase text-[7px]">Responsável Técnico / CREA/CRT</p>
+      <section className="mt-16 report-block">
+        <div className="grid grid-cols-2 gap-24 text-[9px] text-center pt-16 max-w-2xl mx-auto">
+           <div className="flex flex-col items-center">
+             <div className="w-[180px] border-t border-zinc-400 mb-1.5"></div>
+             <p className="font-bold uppercase leading-tight">{study.rt_nome}</p>
+             <p className="text-zinc-500 uppercase text-[7px] mt-0.5">Responsável Técnico / CREA/CRT</p>
            </div>
-           <div className="border-t border-zinc-400 pt-2">
-             <p className="font-bold uppercase">Cliente / Representante</p>
-             <p className="text-zinc-400 uppercase text-[7px]">Aceite Técnico</p>
+           <div className="flex flex-col items-center">
+             <div className="w-[180px] border-t border-zinc-400 mb-1.5"></div>
+             <p className="font-bold uppercase leading-tight">Cliente / Representante</p>
+             <p className="text-zinc-500 uppercase text-[7px] mt-0.5">Aceite Técnico</p>
            </div>
         </div>
       </section>
