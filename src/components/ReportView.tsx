@@ -221,7 +221,9 @@ Versão do Sistema: 1.1.0 PRO
             border-color: #000 !important;
           }
           /* Override inline styles for preview scaling during print, excluding elements hidden via no-print */
-          .report-portal-wrapper div:not(#printable-report):not(.no-print):not([class*="no-print"]) {
+          .report-portal-wrapper,
+          .report-flex-container,
+          .report-scale-wrapper {
             transform: none !important;
             margin: 0 !important;
             padding: 0 !important;
@@ -229,6 +231,29 @@ Versão do Sistema: 1.1.0 PRO
             display: block !important;
             height: auto !important;
             position: static !important;
+            box-shadow: none !important;
+          }
+          
+          /* Especiación e espaçamento vertical robusto para assinaturas no print */
+          .signature-block {
+            display: grid !important;
+            grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
+            gap: 48px !important;
+            margin-top: 64px !important;
+            padding-top: 64px !important;
+            page-break-inside: avoid !important;
+            break-inside: avoid !important;
+          }
+          .signature-block > div {
+            display: flex !important;
+            flex-direction: column !important;
+            align-items: center !important;
+            text-align: center !important;
+          }
+          .signature-block .border-t {
+            border-top: 1px solid black !important;
+            margin-bottom: 8px !important;
+            width: 180px !important;
           }
           /* Ensure no-print items inside the portal are actually hidden */
           .report-portal-wrapper .no-print,
@@ -553,7 +578,7 @@ Versão do Sistema: 1.1.0 PRO
         </div>
       </div>
 
-      <div className="w-full flex justify-center px-0 sm:px-4 py-8">
+      <div className="w-full flex justify-center px-0 sm:px-4 py-8 report-flex-container">
         <div 
           style={{ 
             transform: `scale(${previewScale})`, 
@@ -561,7 +586,7 @@ Versão do Sistema: 1.1.0 PRO
             width: '210mm',
             marginBottom: `-${(1 - previewScale) * 100}%` 
           }}
-          className="bg-white shadow-[0_0_100px_rgba(0,0,0,0.8)] print:transform-none print:shadow-none print:m-0"
+          className="bg-white shadow-[0_0_100px_rgba(0,0,0,0.8)] print:transform-none print:shadow-none print:m-0 report-scale-wrapper"
         >
           <div 
             ref={reportRef} 
@@ -1722,7 +1747,7 @@ const CemigReport = ({ study, curves, specialPoints }: any) => {
       </section>
 
       <section className="mt-16 report-block">
-        <div className="grid grid-cols-2 gap-24 text-[9px] text-center pt-16 max-w-2xl mx-auto">
+        <div className="grid grid-cols-2 gap-24 text-[9px] text-center pt-16 max-w-2xl mx-auto signature-block">
            <div className="flex flex-col items-center">
              <div className="w-[180px] border-t border-zinc-400 mb-1.5"></div>
              <p className="font-bold uppercase leading-tight">{study.rt_nome}</p>
