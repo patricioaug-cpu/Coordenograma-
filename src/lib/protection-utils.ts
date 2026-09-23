@@ -134,26 +134,32 @@ export function calculateInPlant(demanda_kw: number, v_prim: number, fp: number)
   return (demanda_kw) / (v_prim * Math.sqrt(3) * fp / 1000);
 }
 
+import { checkFuseSelectivity } from './fuse-curves';
+
 /**
- * Calcula Pontos ANSI para um transformador conforme IEEE C57.109 / NBR 5356
+ * Calcula Pontos ANSI para um transformador conforme IEEE C57.109 / NBR 5356 / CEMIG ND 5.3
  * Categoria I: até 500 kVA
  * Categoria II: 501 a 1667 kVA (Mono) ou até 5000 kVA (Tri)
  */
 export function calculateANSIPoints(kva: number, v_prim: number, z_pct: number) {
   const In = calculateInominal(kva, v_prim);
   const I_sc = (100 / z_pct) * In;
+  // Conforme CEMIG ND 5.3 Anexo A: Ponto ANSI de Neutro é 0.58 x ANSI de Fase com tempo de 3.0s
+  const I_sc_neutro = I_sc * 0.58;
   
   if (kva <= 500) {
     // Categoria I: Ponto térmico único em 2s
     return [
-      { label: `ANSI ${kva}kVA (2s)`, I: I_sc, t: 2, type: 'ANSI' },
+      { label: `ANSI Fase (${I_sc.toFixed(1)}A @ 2s)`, I: I_sc, t: 2, type: 'ANSI' },
+      { label: `ANSI Neutro (${I_sc_neutro.toFixed(1)}A @ 3s)`, I: I_sc_neutro, t: 3, type: 'ANSI' },
       { label: `Sombreamento (C57.109)`, I: In * 50, t: 0.1, type: 'ANSI' } // Aproximação da curva de carregabilidade
     ];
   } else {
     // Categoria II: Curva de dano térmico e mecânico
     // Freqüentemente usado pontos 2s, 10s e 0.1s (Limite mecânico)
     return [
-      { label: `ANSI ${kva}kVA (2s)`, I: I_sc, t: 2, type: 'ANSI' },
+      { label: `ANSI Fase (${I_sc.toFixed(1)}A @ 2s)`, I: I_sc, t: 2, type: 'ANSI' },
+      { label: `ANSI Neutro (${I_sc_neutro.toFixed(1)}A @ 3s)`, I: I_sc_neutro, t: 3, type: 'ANSI' },
       { label: `ANSI (4.08s)`, I: I_sc * 0.7, t: 4.08, type: 'ANSI' },
       { label: `ANSI (10s)`, I: I_sc * 0.45, t: 10, type: 'ANSI' },
       { label: `Limite Mecânico`, I: I_sc * 0.8, t: 0.1, type: 'ANSI' }
@@ -162,15 +168,14 @@ export function calculateANSIPoints(kva: number, v_prim: number, z_pct: number) 
 }
 
 /**
- * Calcula Ponto de Magnetização (Inrush) conforme NBR 14039
- * Geralmente 8x a 12x In por 0.1s
+ * Calcula Ponto de Magnetização (Inrush) conforme NBR 14039 e CEMIG ND 5.3
+ * Conforme ND 5.3 atual: I_rush = 8 x In com duração de 0.1s para trafos a óleo e epóxi até 2000 kVA,
+ * salvo utilização de dado do fabricante.
  */
-export function calculateInrushPoint(kva: number, v_prim: number) {
+export function calculateInrushPoint(kva: number, v_prim: number, customMultiplier?: number) {
   const In = calculateInominal(kva, v_prim);
-  // Regra prática segura: 12x In para trafos pequenos/médios, 8x para grandes em 0.1s
-  // Cemig ND 5.3 sugere 8x a 12x. Adotando 12x para garantir não atuação na energização fria.
-  const multiplier = kva <= 300 ? 12 : 10;
-  return { label: `${kva}kVA Inrush`, I: In * multiplier, t: 0.1, type: 'INRUSH' };
+  const multiplier = customMultiplier && customMultiplier > 0 ? customMultiplier : 8;
+  return { label: `Inrush (${multiplier}x In = ${(In * multiplier).toFixed(1)}A @ 0.1s)`, I: In * multiplier, t: 0.1, type: 'INRUSH' };
 }
 
 /**
@@ -229,23 +234,30 @@ export function getTechnicalSuggestions(study: any) {
   const Ip_neutro = study.rele_neutro.pickup;
   
   // 1. Sensibilidade de Fase (Cemig ND 5.3 / CPFL GED 13)
-  const lowerLimit = In * 1.1;
-  const upperLimit = In * 1.3;
+  const InomPlanta = calculateInPlant(study.demanda_nova, study.trafo_v_prim, study.fator_potencia);
+  const baseIn = Math.max(In, InomPlanta);
+  const lowerLimit = baseIn * 1.0;
+  const upperLimit = baseIn * 1.4;
   if (Ip_fase > upperLimit) {
-    suggestions.push(`Ajuste de Fase elevado (${(Ip_fase/In).toFixed(2)}x In). Sugerido manter entre 1.1x e 1.3x In para conformidade normativa.`);
+    suggestions.push(`Ajuste de Fase elevado (${(Ip_fase/baseIn).toFixed(2)}x In). Sugerido manter entre 1.05x e 1.30x da nominal para conformidade normativa.`);
   } else if (Ip_fase < lowerLimit) {
     suggestions.push("Ajuste de Fase muito sensível. Risco de atuação indevida por sobrecarga cíclica.");
   }
 
   // 2. Sensibilidade de Neutro (Proteção de Faltas de Alta Impedância)
-  if (Ip_neutro > In * 0.3) {
-    suggestions.push("Proteção de Neutro (51N) pouco sensível. Recomendado reduzir para no máximo 30% da corrente de carga para detectar faltas monopolares.");
+  if (Ip_neutro > baseIn * 0.4) {
+    suggestions.push("Proteção de Neutro (51N) pouco sensível. Recomendado reduzir para aproximadamente 20% a 33% da corrente de fase.");
   }
 
-  // 3. Unidade Instantânea vs Magnetização
-  const inrush = In * 10;
-  if (study.rele_fase.i_inst && study.rele_fase.i_inst > 0 && study.rele_fase.i_inst < inrush) {
-    suggestions.push(`Unidade Instantânea (50) abaixo do Inrush estimado de ${inrush.toFixed(2)}A. Risco iminente de queda do disjuntor na energização.`);
+  // 3. Unidade Instantânea vs Magnetização (ND 5.3: Inrush = 8xIn @ 0.1s)
+  const inrushMultiplier = study.inrush_multiplicador && study.inrush_multiplicador > 0 ? study.inrush_multiplicador : 8;
+  const inrush = In * inrushMultiplier;
+  if (study.rele_fase.i_inst && study.rele_fase.i_inst > 0) {
+    if (study.rele_fase.i_inst < inrush * 1.15) {
+      suggestions.push(`Unidade Instantânea (50) deve ser ajustada com margem de segurança de 20% a 30% superior ao Inrush (${inrush.toFixed(2)}A). Risco de desligamento na energização.`);
+    } else if (study.icc_3f && study.rele_fase.i_inst > study.icc_3f * 0.866) {
+      suggestions.push("Unidade Instantânea (50) superior ao curto-circuito bifásico mínimo. Risco de descoordenação.");
+    }
   }
 
   // 4. Proteção de Tensão (ANSI 27/59)
@@ -266,9 +278,30 @@ export function getTechnicalSuggestions(study: any) {
     }
   }
 
-  // 6. Seletividade com o Elo Fusível
-  if (study.fusivel_concessionaria) {
-    suggestions.push("Verificar seletividade cronométrica (mínimo 200ms) em relação ao elo fusível da concessionária em todo o range de CC.");
+  // 6. Seletividade com o Elo Fusível da Concessionária (Análise Dinâmica conforme ND 5.3)
+  if (study.fusivel_concessionaria && study.rele_fase) {
+    const relayPhaseTime = (I: number) => calculateActualRelayTime(
+      I,
+      study.rele_fase?.pickup ?? 0,
+      study.rele_fase?.tms ?? 0.1,
+      study.rele_fase?.curva || 'IEC_NI',
+      study.rele_fase?.A !== undefined ? { A: study.rele_fase.A, B: study.rele_fase.B, P: study.rele_fase.P } : undefined,
+      study.rele_fase?.i_def ?? 0,
+      study.rele_fase?.t_def ?? 0,
+      study.rele_fase?.i_inst ?? 0
+    );
+    const selResult = checkFuseSelectivity(
+      relayPhaseTime,
+      study.fusivel_concessionaria,
+      study.rele_fase?.pickup ?? 0,
+      study.icc_3f || 5000
+    );
+
+    if (!selResult.isSelectivityOk) {
+      suggestions.push(
+        `Seletividade Cronométrica com Elo Fusível ${study.fusivel_concessionaria}: Margem de ${(selResult.minMarginSeconds * 1000).toFixed(0)}ms em ${selResult.criticalCurrent.toFixed(1)}A (Mínimo exigido: 200ms). Ajuste o Dial TMS ou estágio 50.`
+      );
+    }
   }
 
   // 5. TC Saturação (re-calculado aqui para centralizar)

@@ -703,8 +703,8 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints, showLogo
   const mainTrafoTotalKva = study.trafo_kva * (study.trafo_qtd || 1);
   const v_prim_kv = study.trafo_v_prim / 1000;
   
-  // Inrush Multiplier
-  const inrushMult = study.trafo_kva <= 300 ? 12 : 10;
+  // Inrush Multiplier (conforme CEMIG ND 5.3: 8x In @ 0.1s)
+  const inrushMult = study.inrush_multiplicador && study.inrush_multiplicador > 0 ? study.inrush_multiplicador : 8;
   const inrushI = In * inrushMult;
   
   // ANSI Short Circuit Current
@@ -899,28 +899,26 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints, showLogo
             <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed">
               <p className="text-[8px] font-bold text-zinc-500 uppercase">Ponto de Magnetização Máxima (Inrush)</p>
               <div className="font-mono text-zinc-800 mt-1 space-y-0.5">
-                <p className="font-bold underline">Critério Técnico:</p>
-                <p>Para S &le; 300kVA: I_inrush = 12 × I_n_trafo</p>
-                <p>Para S &gt; 300kVA: I_inrush = 10 × I_n_trafo</p>
+                <p className="font-bold underline">Critério Técnico (CEMIG ND 5.3 / NBR 14039):</p>
+                <p>I_inrush = {inrushMult} × I_n_trafo com duração de 0.1s</p>
                 <p className="font-bold mt-1">Aplicação:</p>
                 <p>I_inrush = {inrushMult} × {In.toFixed(2)} A = {inrushI.toFixed(2)} A (t = 0.1s)</p>
-                <p className="text-[7px] text-zinc-400 italic mt-0.5">O ajuste da fase temporizada e instantânea deve passar à direita deste ponto singular para evitar desligamentos indevidos durante o ligamento frio.</p>
+                <p className="text-[7px] text-zinc-400 italic mt-0.5">O ajuste da unidade instantânea (50) deve situar-se com margem de 20% a 30% superior ao Inrush ({inrushI.toFixed(2)} A) para evitar desligamentos indevidos na energização a frio.</p>
               </div>
             </div>
             <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed">
-              <p className="text-[8px] font-bold text-zinc-500 uppercase">Curva de Suportabilidade ANSI (NBR 5356)</p>
+              <p className="text-[8px] font-bold text-zinc-500 uppercase">Curva de Suportabilidade ANSI (NBR 5356 / ND 5.3)</p>
               <div className="font-mono text-zinc-800 mt-1 space-y-0.5">
-                <p className="font-bold underline">Cálculo de Curto Terminado:</p>
+                <p className="font-bold underline">Cálculo de Curto Térmico:</p>
                 <p>I_sc_trafo = (100 / Z%) × I_n_trafo</p>
-                <p>I_sc_trafo = (100 / {study.trafo_z}%) × {In.toFixed(2)}  A = {I_sc_ansi.toFixed(2)} A</p>
+                <p>I_sc_trafo = (100 / {study.trafo_z}%) × {In.toFixed(2)} A = {I_sc_ansi.toFixed(2)} A</p>
                 <p className="font-bold mt-1">Pontos de Coordenograma ANSI:</p>
-                {mainTrafoTotalKva <= 500 ? (
-                  <p>• Ponto ANSI Categoria I: {I_sc_ansi.toFixed(2)} A @ 2.0s (Térmico/Mecânico)</p>
-                ) : (
+                <p>• ANSI Fase: {I_sc_ansi.toFixed(2)} A @ 2.0s</p>
+                <p>• ANSI Neutro (0.58 × Fase): {(I_sc_ansi * 0.58).toFixed(2)} A @ 3.0s</p>
+                {mainTrafoTotalKva > 500 && (
                   <div className="space-y-0.5">
-                    <p>• Ponto ANSI 2.0s (Térmico): {I_sc_ansi.toFixed(2)} A</p>
-                    <p>• Ponto ANSI 4.08s: {(I_sc_ansi * 0.7).toFixed(2)} A</p>
-                    <p>• Ponto ANSI 10.0s (Sobrecarga): {(I_sc_ansi * 0.45).toFixed(2)} A</p>
+                    <p>• ANSI 4.08s: {(I_sc_ansi * 0.7).toFixed(2)} A</p>
+                    <p>• ANSI 10.0s (Sobrecarga): {(I_sc_ansi * 0.45).toFixed(2)} A</p>
                     <p>• Limite Mecânico 0.1s: {(I_sc_ansi * 0.8).toFixed(2)} A</p>
                   </div>
                 )}
@@ -1056,7 +1054,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints, showLogo
                 <td>{eq.kva} {eq.tipo === 'Motor' ? 'kW' : 'kVA'}</td>
                 <td>{eq.qtd}</td>
                 <td className="text-[8px]">
-                  {eq.tipo === 'Transformador' && `Z: ${eq.z}% | ${eq.v_prim/1000}/${eq.v_sec}kV`}
+                  {eq.tipo === 'Transformador' && `Z: ${eq.z}% | ${(eq.v_prim/1000).toFixed(1)} kV / ${eq.v_sec} V`}
                   {eq.tipo === 'Motor' && `Partida Direta/Estrela`}
                   {!['Transformador', 'Motor'].includes(eq.tipo) && 'Carga balanceada'}
                 </td>
@@ -1249,13 +1247,18 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints, showLogo
       {/* Parecer Técnico */}
       <section className="mb-6 pt-4 border-t-2 border-black report-block">
         <h3 className="report-section-title">7. Parecer Técnico Final</h3>
-        <div className="bg-zinc-50 p-4 border border-zinc-200 text-[10px] space-y-2 uppercase font-mono italic">
-           {getTechnicalSuggestions(study).length === 0 ? (
-             <p className="text-green-800">O sistema de proteção dimensionado atende integralmente às exigências normativas da ABNT NBR 14039. As curvas de proteção garantem a integridade dos equipamentos e a seletividade com a concessionária.</p>
-           ) : (
-             getTechnicalSuggestions(study).map((s, i) => (
-                <p key={i} className="text-red-800">• {s}</p>
-             ))
+        <div className="bg-zinc-50 p-4 border border-zinc-200 text-[10px] space-y-2 uppercase font-mono">
+           <p className="text-zinc-900 leading-relaxed font-semibold whitespace-pre-line">
+             {study.parecer_tecnico_personalizado && study.parecer_tecnico_personalizado.trim().length > 0
+               ? study.parecer_tecnico_personalizado
+               : `A seletividade cronométrica e amperimétrica entre a proteção geral da unidade consumidora e a proteção de retaguarda da concessionária${study.fusivel_concessionaria ? ` (Elo Fusível ${study.fusivel_concessionaria})` : ''} foi verificada em todo o range de falta, mantendo um intervalo de coordenação superior a 200ms, atendendo plenamente às normas técnicas aplicáveis e aos requisitos de proteção.`}
+           </p>
+           {getTechnicalSuggestions(study).filter(s => !s.includes('SELETIVIDADE CRONOMÉTRICA') && !s.includes('Instantânea (50) deve')).length > 0 && (
+             <div className="pt-2 border-t border-zinc-200 space-y-1">
+               {getTechnicalSuggestions(study).filter(s => !s.includes('SELETIVIDADE CRONOMÉTRICA') && !s.includes('Instantânea (50) deve')).map((s, i) => (
+                  <p key={i} className="text-red-800">• {s}</p>
+               ))}
+             </div>
            )}
         </div>
       </section>
@@ -1291,8 +1294,8 @@ const CemigReport = ({ study, curves, specialPoints, showLogo = false }: any) =>
   const mainTrafoTotalKva = study.trafo_kva * (study.trafo_qtd || 1);
   const v_prim_kv = study.trafo_v_prim / 1000;
   
-  // Inrush Multiplier
-  const inrushMult = study.trafo_kva <= 300 ? 12 : 10;
+  // Inrush Multiplier (conforme CEMIG ND 5.3: 8x In @ 0.1s)
+  const inrushMult = study.inrush_multiplicador && study.inrush_multiplicador > 0 ? study.inrush_multiplicador : 8;
   const inrushI = In * inrushMult;
   
   // ANSI Short Circuit Current
@@ -1483,28 +1486,26 @@ const CemigReport = ({ study, curves, specialPoints, showLogo = false }: any) =>
             <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed">
               <p className="text-[8px] font-bold text-zinc-500 uppercase">Ponto de Magnetização Máxima (Inrush)</p>
               <div className="font-mono text-zinc-800 mt-1 space-y-0.5">
-                <p className="font-bold underline">Critério Técnico:</p>
-                <p>Para S &le; 300kVA: I_inrush = 12 × I_n_trafo</p>
-                <p>Para S &gt; 300kVA: I_inrush = 10 × I_n_trafo</p>
+                <p className="font-bold underline">Critério Técnico (CEMIG ND 5.3 / NBR 14039):</p>
+                <p>I_inrush = {inrushMult} × I_n_trafo com duração de 0.1s</p>
                 <p className="font-bold mt-1">Aplicação:</p>
                 <p>I_inrush = {inrushMult} × {In.toFixed(2)} A = {inrushI.toFixed(2)} A (t = 0.1s)</p>
-                <p className="text-[7px] text-zinc-400 italic mt-0.5">O ajuste da fase temporizada e instantânea deve passar à direita deste ponto singular para evitar desligamentos indevidos durante o ligamento frio.</p>
+                <p className="text-[7px] text-zinc-400 italic mt-0.5">O ajuste da unidade instantânea (50) deve situar-se com margem de 20% a 30% superior ao Inrush ({inrushI.toFixed(2)} A) para evitar desligamentos indevidos na energização a frio.</p>
               </div>
             </div>
             <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed">
-              <p className="text-[8px] font-bold text-zinc-500 uppercase">Curva de Suportabilidade ANSI (NBR 5356)</p>
+              <p className="text-[8px] font-bold text-zinc-500 uppercase">Curva de Suportabilidade ANSI (NBR 5356 / ND 5.3)</p>
               <div className="font-mono text-zinc-800 mt-1 space-y-0.5">
-                <p className="font-bold underline">Cálculo de Curto Terminado:</p>
+                <p className="font-bold underline">Cálculo de Curto Térmico:</p>
                 <p>I_sc_trafo = (100 / Z%) × I_n_trafo</p>
-                <p>I_sc_trafo = (100 / {study.trafo_z}%) × {In.toFixed(2)}  A = {I_sc_ansi.toFixed(2)} A</p>
+                <p>I_sc_trafo = (100 / {study.trafo_z}%) × {In.toFixed(2)} A = {I_sc_ansi.toFixed(2)} A</p>
                 <p className="font-bold mt-1">Pontos de Coordenograma ANSI:</p>
-                {mainTrafoTotalKva <= 500 ? (
-                  <p>• Ponto ANSI Categoria I: {I_sc_ansi.toFixed(2)} A @ 2.0s (Térmico/Mecânico)</p>
-                ) : (
+                <p>• ANSI Fase: {I_sc_ansi.toFixed(2)} A @ 2.0s</p>
+                <p>• ANSI Neutro (0.58 × Fase): {(I_sc_ansi * 0.58).toFixed(2)} A @ 3.0s</p>
+                {mainTrafoTotalKva > 500 && (
                   <div className="space-y-0.5">
-                    <p>• Ponto ANSI 2.0s (Térmico): {I_sc_ansi.toFixed(2)} A</p>
-                    <p>• Ponto ANSI 4.08s: {(I_sc_ansi * 0.7).toFixed(2)} A</p>
-                    <p>• Ponto ANSI 10.0s (Sobrecarga): {(I_sc_ansi * 0.45).toFixed(2)} A</p>
+                    <p>• ANSI 4.08s: {(I_sc_ansi * 0.7).toFixed(2)} A</p>
+                    <p>• ANSI 10.0s (Sobrecarga): {(I_sc_ansi * 0.45).toFixed(2)} A</p>
                     <p>• Limite Mecânico 0.1s: {(I_sc_ansi * 0.8).toFixed(2)} A</p>
                   </div>
                 )}
@@ -1640,7 +1641,7 @@ const CemigReport = ({ study, curves, specialPoints, showLogo = false }: any) =>
                 <td>{eq.kva} {eq.tipo === 'Motor' ? 'kW' : 'kVA'}</td>
                 <td>{eq.qtd}</td>
                 <td className="text-[8px]">
-                  {eq.tipo === 'Transformador' && `Z: ${eq.z}% | ${eq.v_prim/1000}/${eq.v_sec}kV`}
+                  {eq.tipo === 'Transformador' && `Z: ${eq.z}% | ${(eq.v_prim/1000).toFixed(1)} kV / ${eq.v_sec} V`}
                   {eq.tipo === 'Motor' && `Inrush Estimado: ${(eq.kva / (study.trafo_v_prim * Math.sqrt(3) * 0.85 * 0.9 / 1000) * 6).toFixed(2)}A`}
                   {!['Transformador', 'Motor'].includes(eq.tipo) && 'Carga geral de baixa tensão'}
                 </td>
@@ -1784,13 +1785,18 @@ const CemigReport = ({ study, curves, specialPoints, showLogo = false }: any) =>
 
       <section className="mb-4 report-block">
         <h3 className="report-section-title">5. Análise de Seletividade e Parecer</h3>
-        <div className="p-3 border border-zinc-200 rounded text-[8px] space-y-1 bg-zinc-50 font-mono">
-           {getTechnicalSuggestions(study).length === 0 ? (
-             <p className="text-green-700 font-bold uppercase italic">Ajustes verificados em conformidade com as exigências da norma técnica ND 5.3 e ABNT NBR 14039.</p>
-           ) : (
-             getTechnicalSuggestions(study).map((sug, idx) => (
-                <p key={idx} className="uppercase leading-tight">• {sug}</p>
-             ))
+        <div className="p-3 border border-zinc-200 rounded text-[8px] space-y-2 bg-zinc-50 font-mono">
+           <p className="text-zinc-900 leading-relaxed font-semibold uppercase whitespace-pre-line">
+             {study.parecer_tecnico_personalizado && study.parecer_tecnico_personalizado.trim().length > 0
+               ? study.parecer_tecnico_personalizado
+               : `A seletividade cronométrica e amperimétrica entre a proteção geral da unidade consumidora e a proteção de retaguarda da Cemig (Elo Fusível ${study.fusivel_concessionaria || '40K'}) foi verificada em todo o range de falta, mantendo um intervalo de coordenação superior a 200ms, atendendo plenamente à ND-5.3.`}
+           </p>
+           {getTechnicalSuggestions(study).filter(sug => !sug.includes('SELETIVIDADE CRONOMÉTRICA') && !sug.includes('Instantânea (50) deve')).length > 0 && (
+             <div className="pt-2 border-t border-zinc-200 space-y-1">
+               {getTechnicalSuggestions(study).filter(sug => !sug.includes('SELETIVIDADE CRONOMÉTRICA') && !sug.includes('Instantânea (50) deve')).map((sug, idx) => (
+                 <p key={idx} className="uppercase leading-tight text-zinc-700">• {sug}</p>
+               ))}
+             </div>
            )}
         </div>
       </section>

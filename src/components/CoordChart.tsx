@@ -11,6 +11,8 @@ interface CurveData {
   label: string;
   points: Point[];
   color: string;
+  strokeDasharray?: string;
+  strokeWidth?: number;
 }
 
 export interface SpecialPoint {
@@ -235,11 +237,11 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
       axisXGroup.selectAll("text").attr("fill", "rgba(34, 197, 94, 0.6)").attr("font-weight", "bold");
       axisYGroup.selectAll("text").attr("fill", "rgba(34, 197, 94, 0.6)").attr("font-weight", "bold");
 
-      // Update Pickups Labels
+      // Update Pickups Labels (apenas para curvas de relés, excluindo elo fusível e sincronismo)
       labelsGroup.selectAll("*").remove();
       const pickupPositions: number[] = [];
       curves.forEach((curve, idx) => {
-        if (curve.points.length > 0) {
+        if (curve.points.length > 0 && !curve.label.startsWith('Elo Fusível') && !curve.label.startsWith('Sync')) {
           const pickup = curve.points[0].I / 1.1;
           const px = newXScale(pickup);
           if (px >= 0 && px <= width) {
@@ -298,7 +300,8 @@ export const CoordChart: React.FC<CoordChartProps> = ({ curves, icc_3f, icc_1f, 
           .attr("class", "curve-path")
           .attr("fill", "none")
           .attr("stroke", curve.color)
-          .attr("stroke-width", 2)
+          .attr("stroke-width", curve.strokeWidth || 2)
+          .attr("stroke-dasharray", curve.strokeDasharray || null)
           .attr("stroke-linecap", "round")
           .attr("stroke-linejoin", "round")
           .attr("d", lineGenerator);
