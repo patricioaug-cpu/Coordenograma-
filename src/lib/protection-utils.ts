@@ -249,14 +249,11 @@ export function getTechnicalSuggestions(study: any) {
     suggestions.push("Proteção de Neutro (51N) pouco sensível. Recomendado reduzir para aproximadamente 20% a 33% da corrente de fase.");
   }
 
-  // 3. Unidade Instantânea vs Magnetização (ND 5.3: Inrush = 8xIn @ 0.1s)
-  const inrushMultiplier = study.inrush_multiplicador && study.inrush_multiplicador > 0 ? study.inrush_multiplicador : 8;
-  const inrush = In * inrushMultiplier;
-  if (study.rele_fase.i_inst && study.rele_fase.i_inst > 0) {
-    if (study.rele_fase.i_inst < inrush * 1.15) {
-      suggestions.push(`Unidade Instantânea (50) deve ser ajustada com margem de segurança de 20% a 30% superior ao Inrush (${inrush.toFixed(2)}A). Risco de desligamento na energização.`);
-    } else if (study.icc_3f && study.rele_fase.i_inst > study.icc_3f * 0.866) {
-      suggestions.push("Unidade Instantânea (50) superior ao curto-circuito bifásico mínimo. Risco de descoordenação.");
+  // 3. Unidade Instantânea vs Magnetização, Menor Icc e Ponto ANSI (Critérios CEMIG ND-5.3)
+  if (study.rele_fase?.i_inst && study.rele_fase.i_inst > 0) {
+    const instDiag = validateInstPhaseND53(study);
+    if (!instDiag.isValid) {
+      instDiag.messages.forEach(msg => suggestions.push(msg));
     }
   }
 
@@ -363,3 +360,158 @@ export function calculateActualRelayTime(
   return calculateTime(I, Ipickup, TMS, type, customParams);
 }
 
+
+
+/**
+ * Determina o ponto ANSI e a corrente de dano térmico do menor transformador da instalação
+ * Conforme critério da CEMIG ND-5.3
+ */
+export function calculateSmallestTrafoANSI(study: any): { ansiCurrent: number; label: string; kva: number } {
+  const vPrim = study.trafo_v_prim || 13800;
+  
+  // Transformador principal (potência unitária de 1 trafo)
+  const mainKva = study.trafo_kva || 500;
+  const mainZ = study.trafo_z || 5;
+  const mainIn = calculateInominal(mainKva, vPrim);
+  const mainAnsi = (100 / mainZ) * mainIn;
+  
+  let smallestAnsi = mainAnsi;
+  let smallestLabel = `Trafo Principal (${mainKva} kVA, Z=${mainZ}%)`;
+  let smallestKva = mainKva;
+  
+  // Verifica transformadores adicionais
+  if (Array.isArray(study.equipamentos)) {
+    study.equipamentos
+      .filter((e: any) => e.tipo === 'Transformador' && Number(e.kva) > 0)
+      .forEach((eq: any) => {
+        const eqKva = Number(eq.kva);
+        const eqZ = Number(eq.z || 5);
+        const eqVprim = Number(eq.v_prim || vPrim);
+        const eqIn = calculateInominal(eqKva, eqVprim);
+        const eqAnsi = (100 / eqZ) * eqIn;
+        if (eqAnsi < smallestAnsi) {
+          smallestAnsi = eqAnsi;
+          smallestLabel = `Trafo Adicional (${eqKva} kVA, Z=${eqZ}%)`;
+          smallestKva = eqKva;
+        }
+      });
+  }
+  
+  return {
+    ansiCurrent: Number(smallestAnsi.toFixed(1)),
+    label: smallestLabel,
+    kva: smallestKva
+  };
+}
+
+/**
+ * Calcula o menor curto-circuito da instalação
+ * Conforme critério da CEMIG ND-5.3 (normalmente Icc 2φ = 0.866 x Icc 3φ)
+ */
+export function calculateMinShortCircuit(study: any): { iccMin: number; label: string } {
+  const icc3f = Number(study.icc_3f || 5000);
+  const icc2f = icc3f * 0.866; // Curto-circuito bifásico mínimo
+  const icc1f = study.icc_1f && Number(study.icc_1f) > 0 ? Number(study.icc_1f) : Infinity;
+  const iccMinStudy = study.icc_min && Number(study.icc_min) > 0 ? Number(study.icc_min) : Infinity;
+  
+  const minVal = Math.min(icc2f, icc1f, iccMinStudy);
+  let label = 'Icc 2φ (0.866 × Icc 3φ)';
+  if (minVal === icc1f) label = 'Icc 1φ Mínimo';
+  else if (minVal === iccMinStudy) label = 'Icc Mínimo Informado';
+  
+  return {
+    iccMin: Number(minVal.toFixed(1)),
+    label
+  };
+}
+
+export interface InstPhaseND53Validation {
+  isValid: boolean;
+  inrushCurrent: number;
+  maxAllowedInrushMargin: number; // inrush * 1.05
+  minShortCircuit: number;
+  smallestTrafoAnsi: number;
+  smallestTrafoLabel: string;
+  marginPercentOverInrush: number;
+  status: 'compliant' | 'below_inrush' | 'exceeds_inrush_5pct' | 'exceeds_icc_min' | 'exceeds_ansi';
+  messages: string[];
+  suggestedValue: number;
+}
+
+/**
+ * Validação rigorosa da unidade instantânea de fase (função 50)
+ * segundo os critérios estritos da CEMIG ND-5.3:
+ * 1. Menor valor possível que não provoque atuação indevida na energização (> Inrush)
+ * 2. No máximo 5% acima da corrente de magnetização (≤ 1.05 × Inrush)
+ * 3. Não superar o menor curto-circuito (≤ Icc mín)
+ * 4. Não superar o ponto ANSI do menor transformador (≤ ANSI menor trafo)
+ */
+export function validateInstPhaseND53(study: any): InstPhaseND53Validation {
+  const mainTotalKva = (study.trafo_kva || 500) * (study.trafo_qtd || 1);
+  const In = calculateInominal(mainTotalKva, study.trafo_v_prim || 13800);
+  const inrushMult = study.inrush_multiplicador && study.inrush_multiplicador > 0 ? study.inrush_multiplicador : 8;
+  const inrushCurrent = Number((In * inrushMult).toFixed(1));
+  const maxAllowedInrush = Number((inrushCurrent * 1.05).toFixed(1)); // máximo 5% acima da magnetização
+  
+  const { iccMin } = calculateMinShortCircuit(study);
+  const { ansiCurrent: smallestTrafoAnsi, label: smallestTrafoLabel } = calculateSmallestTrafoANSI(study);
+  
+  const iInst = Number(study.rele_fase?.i_inst || 0);
+  const messages: string[] = [];
+  let status: InstPhaseND53Validation['status'] = 'compliant';
+  
+  const marginPercentOverInrush = inrushCurrent > 0 && iInst > 0 
+    ? Number((((iInst - inrushCurrent) / inrushCurrent) * 100).toFixed(1)) 
+    : 0;
+
+  // Limite superior máximo imposto pela ND 5.3:
+  const maxAllowedND53 = Math.min(maxAllowedInrush, iccMin, smallestTrafoAnsi);
+  
+  // Menor valor possível que não provoque atuação indevida na energização
+  // (isto é, ligeiramente acima do inrush, com teto de +5%, e limitado por Icc e ANSI)
+  const suggestedValue = Math.round(Math.min(maxAllowedInrush, Math.max(inrushCurrent + 1, maxAllowedND53)));
+
+  if (iInst === 0) {
+    status = 'below_inrush';
+    messages.push('Unidade Instantânea de Fase (50) desabilitada (0A).');
+  } else if (iInst <= inrushCurrent) {
+    status = 'below_inrush';
+    messages.push(
+      `ATENÇÃO: Inst. Fase 50 (${iInst}A) ≤ Corrente de Magnetização Inrush (${inrushCurrent}A). Risco de atuação indevida na energização a frio segundo a ND-5.3.`
+    );
+  } else if (iInst > maxAllowedInrush) {
+    status = 'exceeds_inrush_5pct';
+    messages.push(
+      `ATENÇÃO: Inst. Fase 50 (${iInst}A) supera em mais de 5% a corrente de magnetização (limite ND-5.3: máx. ${maxAllowedInrush}A = +5%). Deve ser ajustada no menor valor possível até +5%.`
+    );
+  }
+  
+  if (iInst > iccMin) {
+    status = 'exceeds_icc_min';
+    messages.push(
+      `ATENÇÃO: Inst. Fase 50 (${iInst}A) supera o menor curto-circuito (${iccMin}A). A proteção não operará instantaneamente para faltas mínimas.`
+    );
+  }
+  
+  if (iInst > smallestTrafoAnsi) {
+    status = 'exceeds_ansi';
+    messages.push(
+      `ATENÇÃO: Inst. Fase 50 (${iInst}A) supera o ponto ANSI do menor transformador [${smallestTrafoLabel}: ${smallestTrafoAnsi}A]. Risco de danos térmicos e mecânicos ao transformador.`
+    );
+  }
+
+  const isValid = iInst > inrushCurrent && iInst <= maxAllowedInrush && iInst <= iccMin && iInst <= smallestTrafoAnsi;
+
+  return {
+    isValid,
+    inrushCurrent,
+    maxAllowedInrushMargin: maxAllowedInrush,
+    minShortCircuit: iccMin,
+    smallestTrafoAnsi,
+    smallestTrafoLabel,
+    marginPercentOverInrush,
+    status,
+    messages,
+    suggestedValue
+  };
+}

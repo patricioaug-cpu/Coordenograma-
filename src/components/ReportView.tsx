@@ -903,7 +903,7 @@ const StandardReport = ({ study, concessionaria, curves, specialPoints, showLogo
                 <p>I_inrush = {inrushMult} × I_n_trafo com duração de 0.1s</p>
                 <p className="font-bold mt-1">Aplicação:</p>
                 <p>I_inrush = {inrushMult} × {In.toFixed(2)} A = {inrushI.toFixed(2)} A (t = 0.1s)</p>
-                <p className="text-[7px] text-zinc-400 italic mt-0.5">O ajuste da unidade instantânea (50) deve situar-se com margem de 20% a 30% superior ao Inrush ({inrushI.toFixed(2)} A) para evitar desligamentos indevidos na energização a frio.</p>
+                <p className="text-[7px] text-zinc-400 italic mt-0.5">Segundo a CEMIG ND-5.3, a unidade instantânea de fase (50) deve ser escolhida no menor valor possível que não provoque atuação indevida na energização, no máximo 5% acima do Inrush (máx. {(inrushI * 1.05).toFixed(2)} A), sem superar o menor curto-circuito ({(study.icc_3f * 0.866).toFixed(2)} A) nem o ponto ANSI do menor transformador ({I_sc_ansi.toFixed(2)} A).</p>
               </div>
             </div>
             <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed">
@@ -1490,7 +1490,7 @@ const CemigReport = ({ study, curves, specialPoints, showLogo = false }: any) =>
                 <p>I_inrush = {inrushMult} × I_n_trafo com duração de 0.1s</p>
                 <p className="font-bold mt-1">Aplicação:</p>
                 <p>I_inrush = {inrushMult} × {In.toFixed(2)} A = {inrushI.toFixed(2)} A (t = 0.1s)</p>
-                <p className="text-[7px] text-zinc-400 italic mt-0.5">O ajuste da unidade instantânea (50) deve situar-se com margem de 20% a 30% superior ao Inrush ({inrushI.toFixed(2)} A) para evitar desligamentos indevidos na energização a frio.</p>
+                <p className="text-[7px] text-zinc-400 italic mt-0.5">Segundo a CEMIG ND-5.3, a unidade instantânea de fase (50) deve ser escolhida no menor valor possível que não provoque atuação indevida na energização, no máximo 5% acima do Inrush (máx. {(inrushI * 1.05).toFixed(2)} A), sem superar o menor curto-circuito ({(study.icc_3f * 0.866).toFixed(2)} A) nem o ponto ANSI do menor transformador ({I_sc_ansi.toFixed(2)} A).</p>
               </div>
             </div>
             <div className="border border-zinc-200 p-2.5 rounded bg-zinc-50/50 text-[9px] leading-relaxed">

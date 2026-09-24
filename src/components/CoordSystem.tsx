@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { CONCESSIONARIAS, Concessionaria } from '../constants/concessionarias';
 import { COMMONLY_USED_RELAYS } from '../constants/relays';
-import { generateFullRelayCurve, CurveType, calculateInominal, calculateANSIPoints, calculateInrushPoint, calculateMotorInrush, calculateInPlant, CURVE_CONSTANTS, getTechnicalSuggestions, calculateTime, validateTC, calculateActualRelayTime } from '../lib/protection-utils';
+import { generateFullRelayCurve, CurveType, calculateInominal, calculateANSIPoints, calculateInrushPoint, calculateMotorInrush, calculateInPlant, CURVE_CONSTANTS, getTechnicalSuggestions, calculateTime, validateTC, calculateActualRelayTime, calculateSmallestTrafoANSI, calculateMinShortCircuit, validateInstPhaseND53 } from '../lib/protection-utils';
 import { generateFuseCurve, checkFuseSelectivity, CEMIG_STANDARD_FUSES, FUSE_LINKS, getFuseDefinition, normalizeFuseName } from '../lib/fuse-curves';
 import { CoordChart, SpecialPoint } from './CoordChart';
 import { auth, db, handleFirestoreError } from '../lib/firebase';
@@ -239,7 +239,9 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
   const getDefaultParecerHomologado = (s: StudyData) => {
     const fuseStr = s.fusivel_concessionaria || '40K';
     const iccMax = s.icc_3f || 5000;
-    return `A seletividade cronométrica e amperimétrica entre a proteção geral da unidade consumidora e a proteção de retaguarda da Cemig (Elo Fusível ${fuseStr}) foi verificada em todo o range de falta (até ${iccMax.toFixed(0)} A), mantendo um intervalo de coordenação superior a 200ms, atendendo plenamente à ND-5.3.`;
+    const instDiag = validateInstPhaseND53(s);
+    const iInst = s.rele_fase?.i_inst || 0;
+    return `A seletividade cronométrica e amperimétrica entre a proteção geral da unidade consumidora e a proteção de retaguarda da concessionária (Elo Fusível ${fuseStr}) foi verificada em todo o range de falta (até ${iccMax.toFixed(0)} A), mantendo um intervalo de coordenação superior a ${s.margem_seletividade_minima_ms || 200}ms. Conforme estabelece a CEMIG ND-5.3, o ajuste da unidade instantânea de fase (50 = ${iInst} A) foi fixado no menor valor possível que não provoca atuação indevida na energização (${instDiag.inrushCurrent} A < ${iInst} A ≤ ${instDiag.maxAllowedInrushMargin} A, máx. +5% acima do Inrush), não superando o menor curto-circuito (${instDiag.minShortCircuit} A) nem o ponto ANSI do menor transformador (${instDiag.smallestTrafoAnsi} A), atendendo plenamente à regulamentação técnica.`;
   };
 
   useEffect(() => {
@@ -452,7 +454,14 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     const Inom = (totalKva * 1000) / (study.trafo_v_prim * 1.732);
     const inrushMult = study.inrush_multiplicador || 8;
     const inrushVal = Inom * inrushMult;
-    const calculated_i_inst_fase = Number((inrushVal * 1.25).toFixed(2));
+    
+    // Regra CEMIG ND-5.3: menor valor possível que não provoque atuação indevida (> inrush),
+    // no máximo 5% acima do Inrush, e sem superar o menor Icc nem o ponto ANSI do menor trafo.
+    const { iccMin } = calculateMinShortCircuit(study);
+    const { ansiCurrent: smallestTrafoAnsi } = calculateSmallestTrafoANSI(study);
+    const maxAllowedInrush = inrushVal * 1.05;
+    const maxAllowedND53 = Math.min(maxAllowedInrush, iccMin, smallestTrafoAnsi);
+    const calculated_i_inst_fase = Math.round(Math.min(maxAllowedInrush, Math.max(inrushVal + 1, maxAllowedND53)));
     const calculated_i_inst_neutro = Number((Inom * 4.0).toFixed(2));
 
     if (study.rele_fase.i_inst === 0 || study.rele_neutro.i_inst === 0) {
@@ -468,13 +477,13 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
         }
       }));
     }
-  }, [study.trafo_kva, study.trafo_v_prim, study.trafo_qtd, study.inrush_multiplicador]);
+  }, [study.trafo_kva, study.trafo_v_prim, study.trafo_qtd, study.inrush_multiplicador, study.icc_3f, study.icc_1f, study.icc_min, study.equipamentos]);
 
   useEffect(() => {
     if (study.isAutoEnabled) {
       autoAdjust();
     }
-  }, [study.trafo_kva, study.trafo_v_prim, study.trafo_qtd, study.inrush_multiplicador, study.fusivel_concessionaria, study.isAutoEnabled]);
+  }, [study.trafo_kva, study.trafo_v_prim, study.trafo_qtd, study.inrush_multiplicador, study.fusivel_concessionaria, study.isAutoEnabled, study.icc_3f, study.icc_1f, study.icc_min, study.equipamentos]);
 
   const getRecommendedND53Params = (targetStudy: StudyData) => {
     const totalKva = targetStudy.trafo_kva * (targetStudy.trafo_qtd || 1);
@@ -487,9 +496,15 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     // 2. Pickup de Neutro: 20% do Pickup de Fase (mínimo 5A)
     const pickupNeutro = Math.max(5, Math.ceil(pickupFase * 0.2));
     
-    // 3. Estágio Instantâneo de Fase (50):
-    // Margem de segurança de 25% sobre o Inrush (faixa recomendada de 20% a 30% da ND-5.3)
-    const instFase = Math.round(inrushVal * 1.25);
+    // 3. Estágio Instantâneo de Fase (50) conforme regra CEMIG ND-5.3:
+    // Menor valor possível que não provoque atuação indevida na energização,
+    // no máximo 5% acima da corrente de magnetização (Inrush),
+    // e sem superar o menor curto-circuito nem o ponto ANSI do menor transformador.
+    const { iccMin } = calculateMinShortCircuit(targetStudy);
+    const { ansiCurrent: smallestTrafoAnsi } = calculateSmallestTrafoANSI(targetStudy);
+    const maxAllowedInrush = inrushVal * 1.05;
+    const maxAllowedND53 = Math.min(maxAllowedInrush, iccMin, smallestTrafoAnsi);
+    const instFase = Math.round(Math.min(maxAllowedInrush, Math.max(inrushVal + 1, maxAllowedND53)));
     const instNeutro = Math.round(Inom * 4.0);
     
     // 4. Tempos Definidos:
@@ -594,7 +609,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     if (showToast) {
       setSaveMessage({
         type: 'success',
-        text: `✓ Otimização CEMIG ND 5.3 aplicada: 50=${recs.instFase}A (+25% s/ Inrush), TMS=${recs.tmsFase}, Seletividade ≥ ${minReq}ms garantida!`
+        text: `✓ Otimização CEMIG ND 5.3 aplicada: 50=${recs.instFase}A (ND-5.3: ≤ +5% Inrush, < Icc e < ANSI), TMS=${recs.tmsFase}, Seletividade ≥ ${minReq}ms garantida!`
       });
       setShowManualAdjustmentInfo(true);
       setTimeout(() => setShowManualAdjustmentInfo(false), 8000);
@@ -931,12 +946,37 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     );
   }, [showCemigAdjustModal, cemigModalData, study.icc_3f, study.margem_seletividade_minima_ms]);
 
+  const instPhaseValidation = useMemo(() => validateInstPhaseND53(study), [
+    study.trafo_kva,
+    study.trafo_qtd,
+    study.trafo_v_prim,
+    study.trafo_z,
+    study.inrush_multiplicador,
+    study.icc_3f,
+    study.icc_1f,
+    study.icc_min,
+    study.rele_fase.i_inst,
+    study.equipamentos
+  ]);
+
+  const modalInstPhaseValidation = useMemo(() => {
+    if (!showCemigAdjustModal) return null;
+    return validateInstPhaseND53({
+      ...study,
+      inrush_multiplicador: Number(cemigModalData.inrushMult) || 8,
+      rele_fase: {
+        ...study.rele_fase,
+        i_inst: Number(cemigModalData.instFase) || 0
+      }
+    });
+  }, [showCemigAdjustModal, cemigModalData, study]);
+
   const mainTrafoTotalKva = study.trafo_kva * (study.trafo_qtd || 1);
   const trafoInom = (mainTrafoTotalKva * 1000) / (study.trafo_v_prim * 1.732);
-  const inrushCurrent = trafoInom * (study.inrush_multiplicador || 8);
+  const inrushCurrent = instPhaseValidation.inrushCurrent;
   const instCurrent = study.rele_fase.i_inst;
-  const instMarginPercent = inrushCurrent > 0 && instCurrent > 0 ? ((instCurrent - inrushCurrent) / inrushCurrent) * 100 : 0;
-  const isInstCoordinated = instCurrent >= inrushCurrent * 1.20;
+  const instMarginPercent = instPhaseValidation.marginPercentOverInrush;
+  const isInstCoordinated = instPhaseValidation.isValid;
   const isFullCompliant = selectivityDiag.isSelectivityOk && isInstCoordinated;
 
   // Cemig Specific Points
@@ -1535,8 +1575,8 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                           <p className="text-yellow-500 font-bold">{((((study.trafo_kva * (study.trafo_qtd || 1)) * 1000) / (study.trafo_v_prim * 1.732)) * (study.inrush_multiplicador || 8)).toFixed(2)}A</p>
                         </div>
                         <div className="p-2 bg-black/40 border border-zinc-900 rounded">
-                          <p className="text-zinc-500 text-[8px] uppercase">Inst. Fase 50 (+25% s/ Inrush)</p>
-                          <p className="text-red-400 font-bold">{((((study.trafo_kva * (study.trafo_qtd || 1)) * 1000) / (study.trafo_v_prim * 1.732)) * (study.inrush_multiplicador || 8) * 1.25).toFixed(2)}A</p>
+                          <p className="text-zinc-500 text-[8px] uppercase">Inst. Fase 50 (ND 5.3: máx. +5%)</p>
+                          <p className="text-red-400 font-bold">{((((study.trafo_kva * (study.trafo_qtd || 1)) * 1000) / (study.trafo_v_prim * 1.732)) * (study.inrush_multiplicador || 8) * 1.05).toFixed(2)}A</p>
                         </div>
                         <div className="p-2 bg-black/40 border border-zinc-900 rounded">
                           <p className="text-zinc-500 text-[8px] uppercase">Inst. Neutro (50N)</p>
@@ -1725,7 +1765,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                                 <div className="grid grid-cols-2 gap-x-2 text-zinc-400">
                                    <p>Nominal (In): <span className="text-white font-bold">{(((eq.kva * (eq.qtd || 1)) * 1000) / ((eq.v_prim || study.trafo_v_prim || 13800) * 1.732)).toFixed(2)}A</span></p>
                                    <p>Inrush ({(study.inrush_multiplicador || 8)}x): <span className="text-white font-bold">{((((eq.kva * (eq.qtd || 1)) * 1000) / ((eq.v_prim || study.trafo_v_prim || 13800) * 1.732)) * (study.inrush_multiplicador || 8)).toFixed(2)}A</span></p>
-                                   <p>Inst Fase ({((study.inrush_multiplicador || 8) * 1.25).toFixed(1)}x): <span className="text-white font-bold">{((((eq.kva * (eq.qtd || 1)) * 1000) / ((eq.v_prim || study.trafo_v_prim || 13800) * 1.732)) * (study.inrush_multiplicador || 8) * 1.25).toFixed(2)}A</span></p>
+                                   <p>Inst Fase (ND-5.3: +5%): <span className="text-white font-bold">{((((eq.kva * (eq.qtd || 1)) * 1000) / ((eq.v_prim || study.trafo_v_prim || 13800) * 1.732)) * (study.inrush_multiplicador || 8) * 1.05).toFixed(2)}A</span></p>
                                    <p>Inst Neutro (4x): <span className="text-white font-bold">{((((eq.kva * (eq.qtd || 1)) * 1000) / ((eq.v_prim || study.trafo_v_prim || 13800) * 1.732)) * 4.0).toFixed(2)}A</span></p>
                                 </div>
                              </div>
@@ -2044,21 +2084,28 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                            <div className="flex justify-between items-center mb-1">
                              <h4 className="text-[9px] font-black text-green-500 uppercase tracking-tighter">Instantânea (50)</h4>
                              <span className="text-[8px] text-zinc-400 font-mono">
-                               Inrush: {(calculateInrushPoint(study.trafo_kva * (study.trafo_qtd || 1), study.trafo_v_prim, study.inrush_multiplicador || 8).I).toFixed(1)}A
+                               Inrush: {inrushCurrent.toFixed(1)}A
                              </span>
                            </div>
                            <div>
-                              <FieldInfo label="Corrente Instantânea (A)" description="Pickup da unidade 50 de fase. Deve ser superior ao Inrush (com margem de 20% a 30%) e inferior ao Icc bifásico mínimo no ponto." />
+                              <FieldInfo label="Corrente Instantânea (A)" description="Pickup da unidade 50 de fase. Segundo a CEMIG ND-5.3: menor valor possível que não provoque atuação na energização, no máximo 5% acima do Inrush, e sem superar o menor curto-circuito nem o ponto ANSI do menor transformador." />
                               <input 
                                 type="number" 
                                 step="1"
                                 value={study.rele_fase.i_inst}
                                 onChange={(e) => setStudy({...study, rele_fase: {...study.rele_fase, i_inst: Number(e.target.value)}})}
-                                className="w-full bg-black border border-zinc-700 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 font-mono font-bold transition-all"
+                                className={`w-full bg-black border ${instPhaseValidation.isValid ? 'border-zinc-700 focus:border-green-500' : 'border-amber-500/80 focus:border-amber-400'} text-green-400 p-2 text-xs rounded outline-none font-mono font-bold transition-all`}
                               />
-                              <span className="text-[8px] text-zinc-400 font-mono mt-1.5 block leading-tight">
-                                Margem 20%-30% s/ Inrush: {((calculateInrushPoint(study.trafo_kva * (study.trafo_qtd || 1), study.trafo_v_prim, study.inrush_multiplicador || 8).I) * 1.2).toFixed(0)}A a {((calculateInrushPoint(study.trafo_kva * (study.trafo_qtd || 1), study.trafo_v_prim, study.inrush_multiplicador || 8).I) * 1.3).toFixed(0)}A
-                              </span>
+                              <div className="mt-1.5 space-y-1 font-mono text-[8px]">
+                                <span className="text-zinc-400 block leading-tight">
+                                  Limites ND-5.3: {inrushCurrent.toFixed(0)}A &lt; 50 ≤ {(inrushCurrent * 1.05).toFixed(0)}A (+5%) | Menor Icc: {instPhaseValidation.minShortCircuit}A | ANSI Menor Trafo: {instPhaseValidation.smallestTrafoAnsi}A
+                                </span>
+                                <p className={`font-semibold ${instPhaseValidation.isValid ? 'text-green-400' : 'text-amber-400'}`}>
+                                  {instPhaseValidation.isValid 
+                                    ? `✓ CONFORME CEMIG ND-5.3: ${instMarginPercent >= 0 ? `+${instMarginPercent}%` : `${instMarginPercent}%`} s/ Inrush` 
+                                    : `⚠ ${instPhaseValidation.messages[0] || 'Ajuste em desacordo com a ND-5.3'}`}
+                                </p>
+                              </div>
                            </div>
                         </div>
                       </div>
@@ -3006,23 +3053,23 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                         </span>
                       </div>
 
-                      {/* Card 3: Inrush vs Instantâneo (50) - Totalmente Editável em Tempo Real */}
+                      {/* Card 3: Inrush vs Instantâneo (50) - Totalmente Editável em Tempo Real Conforme ND 5.3 */}
                       <div className="bg-black/60 p-2.5 rounded border border-zinc-900 font-mono">
                         <div className="flex justify-between items-center mb-0.5">
                           <span className="text-[8px] text-zinc-500 uppercase block font-sans">Inst. Fase (50)</span>
                           <button
                             type="button"
                             onClick={() => {
-                              const autoVal = Math.round(inrushCurrent * 1.25);
+                              const recs = getRecommendedND53Params(study);
                               setStudy(prev => ({
                                 ...prev,
-                                rele_fase: { ...prev.rele_fase, i_inst: autoVal }
+                                rele_fase: { ...prev.rele_fase, i_inst: recs.instFase }
                               }));
                             }}
                             className="text-[7.5px] px-1 py-0.5 bg-zinc-800 hover:bg-green-500 hover:text-black text-green-400 rounded transition-all border border-zinc-700 font-sans font-bold cursor-pointer"
-                            title="Ajustar automaticamente para 1.25x Inrush (+25%)"
+                            title={`Ajustar automaticamente conforme ND-5.3: menor valor possível até +5% do Inrush (máx ${(inrushCurrent * 1.05).toFixed(0)}A), limitado por Icc Mín e ANSI`}
                           >
-                            +25% Inrush
+                            +5% ND 5.3
                           </button>
                         </div>
                         <div className="flex items-center gap-1">
@@ -3039,21 +3086,39 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                               }));
                             }}
                             placeholder="0 (Desab.)"
-                            className="w-20 bg-zinc-900 border border-green-500/40 text-green-400 font-bold text-sm px-1.5 py-0.5 rounded outline-none focus:border-green-400"
+                            className={`w-20 bg-zinc-900 border ${instPhaseValidation.isValid ? 'border-green-500/40 text-green-400 focus:border-green-400' : 'border-amber-500/60 text-amber-400 focus:border-amber-400'} font-bold text-sm px-1.5 py-0.5 rounded outline-none`}
                             title="Editar corrente da proteção instantânea de fase (função ANSI 50)"
                           />
                           <span className="text-xs text-zinc-400 font-bold">A</span>
                         </div>
-                        <span className="text-[7.5px] text-zinc-400 block mt-1">
-                          Inrush: {inrushCurrent.toFixed(1)}A ({instMarginPercent >= 0 ? `+${instMarginPercent.toFixed(1)}%` : `${instMarginPercent.toFixed(1)}%`})
-                        </span>
+                        <div className="mt-1 space-y-0.5">
+                          <div className="flex items-center justify-between text-[7.5px]">
+                            <span className="text-zinc-400">Inrush: {inrushCurrent.toFixed(1)}A</span>
+                            <span className={instMarginPercent > 5 || instMarginPercent <= 0 ? "text-amber-400 font-bold" : "text-green-400 font-bold"}>
+                              {instMarginPercent >= 0 ? `+${instMarginPercent.toFixed(1)}%` : `${instMarginPercent.toFixed(1)}%`}
+                            </span>
+                          </div>
+                          <span className={`text-[7px] block font-sans font-bold leading-tight ${instPhaseValidation.isValid ? 'text-green-400' : 'text-amber-400'}`}>
+                            {instPhaseValidation.isValid 
+                              ? "✓ ND-5.3: ≤ +5%, < Icc e < ANSI" 
+                              : instCurrent === 0 
+                                ? "⚠ 50 Desabilitado" 
+                                : instCurrent <= inrushCurrent 
+                                  ? "⚠ ≤ Inrush (Atuação Indevida)" 
+                                  : instCurrent > instPhaseValidation.maxAllowedInrushMargin 
+                                    ? `⚠ > +5% Inrush (máx ${(inrushCurrent * 1.05).toFixed(0)}A)`
+                                    : instCurrent > instPhaseValidation.minShortCircuit
+                                      ? `⚠ > Menor Icc (${instPhaseValidation.minShortCircuit}A)`
+                                      : `⚠ > ANSI (${instPhaseValidation.smallestTrafoAnsi}A)`}
+                          </span>
+                        </div>
                       </div>
 
                       {/* Card 4: Conformidade Global */}
                       <div className="bg-black/60 p-2.5 rounded border border-zinc-900 font-mono">
                         <span className="text-[8px] text-zinc-500 uppercase block font-sans">Conformidade Global</span>
                         <p className={`text-xs font-black uppercase mt-1 ${isFullCompliant ? "text-green-400" : "text-amber-400"}`}>
-                          {isFullCompliant ? "✓ 100% HOMOLOGADO" : "⚠ AJUSTE NECESSÁRIO"}
+                          {isFullCompliant ? "✓ 100% HOMOLOGADO" : !selectivityDiag.isSelectivityOk ? "⚠ SELETIVIDADE ELO" : "⚠ 50 FORA ND-5.3"}
                         </p>
                         <span className="text-[7.5px] text-zinc-400 block mt-1">
                           ND 5.3 & NBR 14039
@@ -3461,8 +3526,8 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                 </div>
                 <div>
                   <span className="text-[10px] text-zinc-400 uppercase block">Instantâneo 50 vs Inrush</span>
-                  <span className="text-zinc-200 font-bold">
-                    50: {cemigModalData.instFase}A (Inrush: {((trafoInom * cemigModalData.inrushMult) || 0).toFixed(0)}A)
+                  <span className={`font-bold ${modalInstPhaseValidation?.isValid ? 'text-green-400' : 'text-amber-400'}`}>
+                    50: {cemigModalData.instFase}A (Inrush: {modalInstPhaseValidation?.inrushCurrent || 0}A, máx +5%: {modalInstPhaseValidation?.maxAllowedInrushMargin || 0}A)
                   </span>
                 </div>
               </div>
@@ -3543,7 +3608,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     2. Proteção de Fase (51 / 50 / 50D)
                   </h4>
                   <span className="text-[10px] text-zinc-500 font-mono">
-                    Recomendado ND 5.3: 51 ≈ 1.25 x Inom | 50 ≈ 1.25 x Inrush
+                    Recomendado ND 5.3: 51 ≈ 1.25 x Inom | 50: menor valor acima de Inrush (máx +5%)
                   </span>
                 </div>
                 <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
@@ -3610,8 +3675,10 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                       onChange={(e) => setCemigModalData(prev => ({ ...prev, instFase: Number(e.target.value) }))}
                       className="w-full bg-zinc-900 border border-zinc-700 text-green-400 p-2 text-xs rounded font-mono outline-none focus:border-green-500"
                     />
-                    <span className="text-[9px] text-zinc-500 font-mono block mt-0.5">
-                      Sugerido: {Math.round(trafoInom * cemigModalData.inrushMult * 1.25)} A (+25% s/ Inrush)
+                    <span className={`text-[9px] font-mono block mt-0.5 ${modalInstPhaseValidation?.isValid ? 'text-green-400' : 'text-amber-400'}`}>
+                      {modalInstPhaseValidation?.isValid 
+                        ? `✓ ND-5.3: ${modalInstPhaseValidation.instFase || cemigModalData.instFase}A (Inrush: ${modalInstPhaseValidation.inrushCurrent}A, máx +5%: ${modalInstPhaseValidation.maxAllowedInrushMargin}A)` 
+                        : `⚠ ${modalInstPhaseValidation?.messages[0] || 'Ajuste fora dos limites da ND-5.3'}`}
                     </span>
                   </div>
 
