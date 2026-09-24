@@ -1023,7 +1023,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
   // Additional Equipment Points
   study.equipamentos.filter(e => e.tipo === 'Transformador').forEach(eq => {
     specialPoints.push(...calculateANSIPoints(eq.kva * eq.qtd, study.trafo_v_prim, 5).map(p => ({...p, type: 'ANSI' as any})));
-    specialPoints.push({...calculateInrushPoint(eq.kva * eq.qtd, study.trafo_v_prim), type: 'INRUSH' as any});
+    specialPoints.push({...calculateInrushPoint(eq.kva * eq.qtd, study.trafo_v_prim, study.inrush_multiplicador || 8), type: 'INRUSH' as any});
   });
 
   study.equipamentos.filter(e => e.tipo === 'Motor').forEach(eq => {
@@ -1531,12 +1531,12 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                           <p className="text-green-400 font-bold">{(((study.trafo_kva * (study.trafo_qtd || 1)) * 1000) / (study.trafo_v_prim * 1.732)).toFixed(2)}A</p>
                         </div>
                         <div className="p-2 bg-black/40 border border-zinc-900 rounded">
-                          <p className="text-zinc-500 text-[8px] uppercase">Magnetização (Inrush)</p>
-                          <p className="text-yellow-500 font-bold">{((((study.trafo_kva * (study.trafo_qtd || 1)) * 1000) / (study.trafo_v_prim * 1.732)) * 10).toFixed(2)}A</p>
+                          <p className="text-zinc-500 text-[8px] uppercase">Magnetização ({study.inrush_multiplicador || 8}x In)</p>
+                          <p className="text-yellow-500 font-bold">{((((study.trafo_kva * (study.trafo_qtd || 1)) * 1000) / (study.trafo_v_prim * 1.732)) * (study.inrush_multiplicador || 8)).toFixed(2)}A</p>
                         </div>
                         <div className="p-2 bg-black/40 border border-zinc-900 rounded">
-                          <p className="text-zinc-500 text-[8px] uppercase">Inst. Fase (50)</p>
-                          <p className="text-red-400 font-bold">{((((study.trafo_kva * (study.trafo_qtd || 1)) * 1000) / (study.trafo_v_prim * 1.732)) * 12.5).toFixed(2)}A</p>
+                          <p className="text-zinc-500 text-[8px] uppercase">Inst. Fase 50 (+25% s/ Inrush)</p>
+                          <p className="text-red-400 font-bold">{((((study.trafo_kva * (study.trafo_qtd || 1)) * 1000) / (study.trafo_v_prim * 1.732)) * (study.inrush_multiplicador || 8) * 1.25).toFixed(2)}A</p>
                         </div>
                         <div className="p-2 bg-black/40 border border-zinc-900 rounded">
                           <p className="text-zinc-500 text-[8px] uppercase">Inst. Neutro (50N)</p>
@@ -1724,8 +1724,8 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                                 <p className="text-green-400 font-bold uppercase text-[7px] leading-tight flex items-center gap-1"><Zap className="w-2.5 h-2.5" /> Cálculos do Trafo {eq.kva * (eq.qtd || 1)} kVA</p>
                                 <div className="grid grid-cols-2 gap-x-2 text-zinc-400">
                                    <p>Nominal (In): <span className="text-white font-bold">{(((eq.kva * (eq.qtd || 1)) * 1000) / ((eq.v_prim || study.trafo_v_prim || 13800) * 1.732)).toFixed(2)}A</span></p>
-                                   <p>Inrush (10x): <span className="text-white font-bold">{((((eq.kva * (eq.qtd || 1)) * 1000) / ((eq.v_prim || study.trafo_v_prim || 13800) * 1.732)) * 10).toFixed(2)}A</span></p>
-                                   <p>Inst Fase (12.5x): <span className="text-white font-bold">{((((eq.kva * (eq.qtd || 1)) * 1000) / ((eq.v_prim || study.trafo_v_prim || 13800) * 1.732)) * 12.5).toFixed(2)}A</span></p>
+                                   <p>Inrush ({(study.inrush_multiplicador || 8)}x): <span className="text-white font-bold">{((((eq.kva * (eq.qtd || 1)) * 1000) / ((eq.v_prim || study.trafo_v_prim || 13800) * 1.732)) * (study.inrush_multiplicador || 8)).toFixed(2)}A</span></p>
+                                   <p>Inst Fase ({((study.inrush_multiplicador || 8) * 1.25).toFixed(1)}x): <span className="text-white font-bold">{((((eq.kva * (eq.qtd || 1)) * 1000) / ((eq.v_prim || study.trafo_v_prim || 13800) * 1.732)) * (study.inrush_multiplicador || 8) * 1.25).toFixed(2)}A</span></p>
                                    <p>Inst Neutro (4x): <span className="text-white font-bold">{((((eq.kva * (eq.qtd || 1)) * 1000) / ((eq.v_prim || study.trafo_v_prim || 13800) * 1.732)) * 4.0).toFixed(2)}A</span></p>
                                 </div>
                              </div>
