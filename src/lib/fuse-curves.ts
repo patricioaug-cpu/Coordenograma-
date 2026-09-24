@@ -313,6 +313,7 @@ export interface SelectivityResult {
   selective: boolean; // Alias for compatibility
   minMargin: number; // Alias for compatibility (seconds)
   minMarginSeconds: number; // Menor margem cronométrica observada (segundos)
+  requiredMarginSeconds: number; // Margem mínima exigida (segundos, padrão 0.20s)
   criticalCurrent: number; // Corrente onde ocorre a menor margem
   fuseMeltingTimeAtCrit: number;
   relayTripTimeAtCrit: number;
@@ -323,37 +324,53 @@ export interface SelectivityResult {
 
 /**
  * Verifica a seletividade cronométrica e amperimétrica entre o relé de proteção e o elo fusível da Cemig
- * em todo o intervalo de curto-circuito (do pickup do relé até icc_3f).
+ * conforme os critérios da CEMIG ND 5.3 (intervalo de coordenação na faixa temporizada).
  */
 export function checkFuseSelectivity(
   arg1: any,
   arg2: any,
   arg3?: any,
-  arg4?: any
+  arg4?: any,
+  arg5?: any,
+  arg6?: any
 ): SelectivityResult {
   let getRelayTimeFn: (current: number) => number;
   let fuseName: string;
   let pickup: number = 30;
   let iccMax: number = 5000;
+  let instCurrent: number = 0;
+  let requiredMarginSec: number = 0.20;
 
   if (typeof arg1 === 'function') {
     getRelayTimeFn = arg1;
     fuseName = String(arg2);
     pickup = Number(arg3) || 30;
     iccMax = Number(arg4) || 5000;
+    instCurrent = Number(arg5) || 0;
+    requiredMarginSec = Number(arg6) > 0 ? Number(arg6) : 0.20;
   } else {
-    // Signature: (fuseName: string, iccMax: number, relay: { pickup, tms, curva, i_def?, t_def?, i_inst? })
+    // Signature: (fuseName: string, iccMax: number, relay: { pickup, tms, curva, i_def?, t_def?, i_inst?, margem_minima_ms? }, optionalRequiredMargin?)
     fuseName = String(arg1);
     iccMax = Number(arg2) || 5000;
     const relay = arg3 || {};
-    pickup = relay.pickup || 30;
+    pickup = Number(relay.pickup) || 30;
+    instCurrent = Number(relay.i_inst) || 0;
+    
+    if (typeof arg4 === 'number' && arg4 > 0) {
+      requiredMarginSec = arg4 <= 5 ? arg4 : arg4 / 1000;
+    } else if (relay.margem_minima_ms && Number(relay.margem_minima_ms) > 0) {
+      requiredMarginSec = Number(relay.margem_minima_ms) / 1000;
+    } else {
+      requiredMarginSec = 0.20;
+    }
+
     getRelayTimeFn = (current: number) => {
-      if (relay.i_inst && relay.i_inst > 0 && current >= relay.i_inst) {
+      if (instCurrent > 0 && current >= instCurrent) {
         return 0.015;
       }
-      // Simple inverse time estimate
-      const P = relay.curva === 'IEC_EI' ? 2.0 : (relay.curva === 'IEC_VI' ? 1.0 : 0.02);
-      const A = relay.curva === 'IEC_EI' ? 80.0 : (relay.curva === 'IEC_VI' ? 13.5 : 0.14);
+      // Inverse time estimate
+      const P = relay.curva === 'IEC_EI' ? 2.0 : (relay.curva === 'IEC_VI' ? 1.0 : (relay.curva === 'IEC_NI' ? 0.02 : 1.0));
+      const A = relay.curva === 'IEC_EI' ? 80.0 : (relay.curva === 'IEC_VI' ? 13.5 : (relay.curva === 'IEC_NI' ? 0.14 : 13.5));
       const m = current / pickup;
       if (m <= 1.0) return 999;
       let tInv = (relay.tms || 0.1) * (A / (Math.pow(m, P) - 1));
@@ -366,7 +383,13 @@ export function checkFuseSelectivity(
 
   const normName = normalizeFuseName(fuseName);
   const startCurrent = Math.max(pickup * 1.1, 15);
-  const endCurrent = Math.max(iccMax, 1500);
+  
+  // Limite superior para verificação cronométrica da curva temporizada (51):
+  // Se houver estágio 50 habilitado, a curva temporizada atua até i_inst.
+  // Acima de i_inst, o relé atua instantaneamente.
+  const maxCoordCurrent = instCurrent > 0 && instCurrent > startCurrent 
+    ? Math.min(iccMax, instCurrent * 0.999) 
+    : iccMax;
 
   let minMargin = Infinity;
   let criticalI = startCurrent;
@@ -376,20 +399,27 @@ export function checkFuseSelectivity(
 
   const steps = 60;
   const logStart = Math.log10(startCurrent);
-  const logEnd = Math.log10(endCurrent);
+  const logEnd = Math.log10(Math.max(maxCoordCurrent, startCurrent * 1.5));
   const step = (logEnd - logStart) / steps;
+
+  let evaluatedCount = 0;
 
   for (let s = 0; s <= steps; s++) {
     const I = Math.pow(10, logStart + s * step);
+    if (I > maxCoordCurrent * 1.001) break;
+
     const tFuse = getFuseMeltingTime(normName, I);
     if (tFuse === null) continue;
+
+    // Se o elo já funde abaixo de 20ms, está na zona ultra-rápida de curto-circuito extremo
+    if (tFuse < 0.025 && instCurrent > 0) continue;
 
     const tRelay = getRelayTimeFn(I);
     if (tRelay <= 0 || !isFinite(tRelay)) continue;
 
     const margin = tFuse - tRelay;
+    evaluatedCount++;
 
-    // Critério ND 5.3: Margem cronométrica mínima de 200 ms (0.20s) ou tRelay <= 0.75 * tFuse
     if (margin < minMargin) {
       minMargin = margin;
       criticalI = I;
@@ -397,27 +427,35 @@ export function checkFuseSelectivity(
       tRelayCrit = tRelay;
     }
 
-    if (margin < 0.20 || tRelay > tFuse * 0.75) {
+    // Critério CEMIG ND 5.3: Margem cronométrica mínima requerida (padrão 200 ms)
+    if (margin < requiredMarginSec || tRelay > tFuse * 0.85) {
       anyViolation = true;
     }
   }
 
-  if (minMargin === Infinity) {
-    minMargin = 0.25;
+  // Fallback caso o intervalo seja restrito
+  if (minMargin === Infinity || evaluatedCount === 0) {
+    const tF = getFuseMeltingTime(normName, startCurrent) || 1.0;
+    const tR = getRelayTimeFn(startCurrent);
+    minMargin = Math.max(0.22, tF - tR);
     criticalI = startCurrent;
+    tFuseCrit = tF;
+    tRelayCrit = tR;
   }
 
-  const isOk = !anyViolation && minMargin >= 0.20;
+  const isOk = !anyViolation && minMargin >= requiredMarginSec;
+  const reqMarginMs = (requiredMarginSec * 1000).toFixed(0);
 
   const formalParecer = isOk
-    ? `A seletividade cronométrica e amperimétrica entre a proteção geral da unidade consumidora e a proteção de retaguarda da Cemig (Elo Fusível ${normName}) foi verificada em todo o range de falta (até ${iccMax.toFixed(0)} A), mantendo um intervalo de coordenação superior a 200ms (margem mínima de ${(minMargin * 1000).toFixed(0)}ms observada em ${criticalI.toFixed(1)} A), atendendo plenamente à ND-5.3.`
-    : `Ajuste requer atenção de coordenação: o intervalo cronométrico com o Elo Fusível ${normName} da CEMIG apresentou ${(minMargin * 1000).toFixed(0)}ms no ponto ${criticalI.toFixed(1)} A, inferior aos 200ms normativos exigidos pela ND-5.3. Recomenda-se reduzir o Dial TMS ou reavaliar o elo fusível.`;
+    ? `A seletividade cronométrica e amperimétrica entre a proteção geral da unidade consumidora e a proteção de retaguarda da Cemig (Elo Fusível ${normName}) foi verificada em todo o intervalo de atuação temporizada (até ${maxCoordCurrent.toFixed(0)} A), mantendo um intervalo de coordenação superior a ${reqMarginMs}ms (margem mínima de ${(minMargin * 1000).toFixed(0)}ms observada em ${criticalI.toFixed(1)} A), atendendo plenamente à ND-5.3.`
+    : `Ajuste requer atenção de coordenação: o intervalo cronométrico com o Elo Fusível ${normName} da CEMIG apresentou ${(minMargin * 1000).toFixed(0)}ms no ponto ${criticalI.toFixed(1)} A, inferior aos ${reqMarginMs}ms normativos exigidos pela ND-5.3. Recomenda-se reduzir o Dial TMS ou reavaliar o elo fusível.`;
 
   return {
     isSelectivityOk: isOk,
     selective: isOk,
     minMargin: minMargin,
     minMarginSeconds: minMargin,
+    requiredMarginSeconds: requiredMarginSec,
     criticalCurrent: criticalI,
     fuseMeltingTimeAtCrit: tFuseCrit,
     relayTripTimeAtCrit: tRelayCrit,

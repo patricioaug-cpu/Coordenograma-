@@ -290,16 +290,23 @@ export function getTechnicalSuggestions(study: any) {
       study.rele_fase?.t_def ?? 0,
       study.rele_fase?.i_inst ?? 0
     );
+    const reqMarginSec = (study.margem_seletividade_minima_ms && study.margem_seletividade_minima_ms > 0)
+      ? study.margem_seletividade_minima_ms / 1000
+      : 0.20;
+
     const selResult = checkFuseSelectivity(
       relayPhaseTime,
       study.fusivel_concessionaria,
       study.rele_fase?.pickup ?? 0,
-      study.icc_3f || 5000
+      study.icc_3f || 5000,
+      study.rele_fase?.i_inst ?? 0,
+      reqMarginSec
     );
 
     if (!selResult.isSelectivityOk) {
+      const minReqMs = (selResult.requiredMarginSeconds * 1000).toFixed(0);
       suggestions.push(
-        `Seletividade Cronométrica com Elo Fusível ${study.fusivel_concessionaria}: Margem de ${(selResult.minMarginSeconds * 1000).toFixed(0)}ms em ${selResult.criticalCurrent.toFixed(1)}A (Mínimo exigido: 200ms). Ajuste o Dial TMS ou estágio 50.`
+        `Seletividade Cronométrica com Elo Fusível ${study.fusivel_concessionaria}: Margem de ${(selResult.minMarginSeconds * 1000).toFixed(0)}ms em ${selResult.criticalCurrent.toFixed(1)}A (Mínimo exigido: ${minReqMs}ms). Clique em "Ajuste CEMIG ND 5.3" para otimizar TMS ou edite o estágio 50.`
       );
     }
   }

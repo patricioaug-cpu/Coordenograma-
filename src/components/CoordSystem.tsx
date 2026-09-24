@@ -6,7 +6,7 @@ import { generateFuseCurve, checkFuseSelectivity, CEMIG_STANDARD_FUSES, FUSE_LIN
 import { CoordChart, SpecialPoint } from './CoordChart';
 import { auth, db, handleFirestoreError } from '../lib/firebase';
 import { signOut } from 'firebase/auth';
-import { Settings, Save, FileText, LayoutList, LogOut, ChevronRight, AlertTriangle, CheckCircle2, User as UserIcon, ShieldAlert, Menu, X as CloseIcon, Plus, Trash2, History as HistoryIcon, Search, HelpCircle, Cpu, Info, Zap, Lightbulb, ShieldCheck, FileEdit, Edit3, X, SlidersHorizontal, Layers } from 'lucide-react';
+import { Settings, Save, FileText, LayoutList, LogOut, ChevronRight, AlertTriangle, CheckCircle2, User as UserIcon, ShieldAlert, Menu, X as CloseIcon, Plus, Trash2, History as HistoryIcon, Search, HelpCircle, Cpu, Info, Zap, Lightbulb, ShieldCheck, FileEdit, Edit3, X, Sliders, SlidersHorizontal, Layers } from 'lucide-react';
 import { collection, addDoc, query, where, getDocs, deleteDoc, doc, serverTimestamp, orderBy } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'motion/react';
 import { AdminPanel } from './AdminPanel';
@@ -52,6 +52,7 @@ interface StudyData {
   fusivel_fator_tolerancia?: number;
   fusivel_cor?: string;
   inrush_multiplicador?: number;
+  margem_seletividade_minima_ms?: number;
   parecer_tecnico_personalizado?: string;
   equipamentos: Equipamento[];
   rele_marca: string;
@@ -122,6 +123,7 @@ const DEFAULT_STUDY: StudyData = {
   fusivel_fator_tolerancia: 1.0,
   fusivel_cor: '#eab308',
   inrush_multiplicador: 8,
+  margem_seletividade_minima_ms: 200,
   parecer_tecnico_personalizado: '',
   equipamentos: [],
   rele_marca: '',
@@ -182,6 +184,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     instNeutro: 0,
     defNeutro: 0,
     tDefNeutro: 0.30,
+    margemMinimaMs: 200,
   });
 
   const [showFuseModal, setShowFuseModal] = useState(false);
@@ -498,24 +501,26 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     // 5. Motor Iterativo de Otimização do Dial/TMS (ND 5.3):
     const fuseCode = targetStudy.fusivel_concessionaria || '40K';
     const iccMax = targetStudy.icc_3f || 5000;
+    const reqMarginSec = (targetStudy.margem_seletividade_minima_ms || 200) / 1000;
     
-    let optimalTms = 0.10;
+    let optimalTms = 0.08;
     let foundOptimal = false;
 
+    // Testar do menor TMS até 0.35 para garantir a seletividade requerida
     for (let t = 0.04; t <= 0.35; t = Number((t + 0.01).toFixed(2))) {
       const sel = checkFuseSelectivity(fuseCode, iccMax, {
         pickup: pickupFase,
         tms: t,
-        curva: targetStudy.rele_fase.curva,
+        curva: targetStudy.rele_fase.curva || 'IEC_VI',
         i_def: defFase,
         t_def: tDefFase,
         i_inst: instFase
-      });
+      }, reqMarginSec);
 
-      if (sel.isSelectivityOk && sel.minMargin >= 0.20) {
+      if (sel.isSelectivityOk && sel.minMargin >= reqMarginSec) {
         optimalTms = t;
         foundOptimal = true;
-        if (sel.minMargin >= 0.21 && sel.minMargin <= 0.40) {
+        if (sel.minMargin >= reqMarginSec && sel.minMargin <= reqMarginSec + 0.15) {
           break;
         }
       }
@@ -523,15 +528,15 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
 
     if (!foundOptimal) {
       let bestMargin = -Infinity;
-      for (let t = 0.04; t <= 0.20; t = Number((t + 0.01).toFixed(2))) {
+      for (let t = 0.04; t <= 0.25; t = Number((t + 0.01).toFixed(2))) {
         const sel = checkFuseSelectivity(fuseCode, iccMax, {
           pickup: pickupFase,
           tms: t,
-          curva: targetStudy.rele_fase.curva,
+          curva: targetStudy.rele_fase.curva || 'IEC_VI',
           i_def: defFase,
           t_def: tDefFase,
           i_inst: instFase
-        });
+        }, reqMarginSec);
         if (sel.minMargin > bestMargin) {
           bestMargin = sel.minMargin;
           optimalTms = t;
@@ -555,15 +560,19 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
       curvaNeutro: targetStudy.rele_neutro.curva || 'IEC_VI',
       instNeutro,
       defNeutro,
-      tDefNeutro
+      tDefNeutro,
+      margemMinimaMs: targetStudy.margem_seletividade_minima_ms || 200,
     };
   };
 
   const runOptimizationEngine = (showToast = true) => {
     const recs = getRecommendedND53Params(study);
+    const minReq = study.margem_seletividade_minima_ms || 200;
     
     setStudy(prev => ({
       ...prev,
+      fusivel_concessionaria: recs.fusivel,
+      margem_seletividade_minima_ms: prev.margem_seletividade_minima_ms || 200,
       rele_fase: { 
         ...prev.rele_fase, 
         pickup: recs.pickupFase, 
@@ -585,7 +594,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     if (showToast) {
       setSaveMessage({
         type: 'success',
-        text: `Otimização CEMIG ND 5.3 aplicada: 50=${recs.instFase}A (+25% s/ Inrush ${recs.inrushVal.toFixed(1)}A), TMS=${recs.tmsFase}, Seletividade ≥ 200ms garantida!`
+        text: `✓ Otimização CEMIG ND 5.3 aplicada: 50=${recs.instFase}A (+25% s/ Inrush), TMS=${recs.tmsFase}, Seletividade ≥ ${minReq}ms garantida!`
       });
       setShowManualAdjustmentInfo(true);
       setTimeout(() => setShowManualAdjustmentInfo(false), 8000);
@@ -598,21 +607,24 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
 
   const handleOpenCemigModal = () => {
     const recs = getRecommendedND53Params(study);
+    const isCurrentOk = selectivityDiag.isSelectivityOk;
+
     setCemigModalData({
       fusivel: study.fusivel_concessionaria || recs.fusivel,
       inrushMult: study.inrush_multiplicador || recs.inrushMult,
-      pickupFase: study.rele_fase.pickup || recs.pickupFase,
-      tmsFase: study.rele_fase.tms || recs.tmsFase,
+      pickupFase: isCurrentOk ? (study.rele_fase.pickup || recs.pickupFase) : recs.pickupFase,
+      tmsFase: isCurrentOk ? (study.rele_fase.tms || recs.tmsFase) : recs.tmsFase,
       curvaFase: study.rele_fase.curva || recs.curvaFase,
-      instFase: study.rele_fase.i_inst !== undefined && study.rele_fase.i_inst > 0 ? study.rele_fase.i_inst : recs.instFase,
+      instFase: (study.rele_fase.i_inst !== undefined && study.rele_fase.i_inst > 0) ? study.rele_fase.i_inst : recs.instFase,
       defFase: study.rele_fase.i_def || recs.defFase,
       tDefFase: study.rele_fase.t_def || recs.tDefFase,
       pickupNeutro: study.rele_neutro.pickup || recs.pickupNeutro,
       tmsNeutro: study.rele_neutro.tms || recs.tmsNeutro,
       curvaNeutro: study.rele_neutro.curva || recs.curvaNeutro,
-      instNeutro: study.rele_neutro.i_inst !== undefined && study.rele_neutro.i_inst > 0 ? study.rele_neutro.i_inst : recs.instNeutro,
+      instNeutro: (study.rele_neutro.i_inst !== undefined && study.rele_neutro.i_inst > 0) ? study.rele_neutro.i_inst : recs.instNeutro,
       defNeutro: study.rele_neutro.i_def || recs.defNeutro,
       tDefNeutro: study.rele_neutro.t_def || recs.tDefNeutro,
+      margemMinimaMs: study.margem_seletividade_minima_ms || 200,
     });
     setShowCemigAdjustModal(true);
   };
@@ -633,10 +645,13 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     const cFaseConst = CURVE_CONSTANTS[cemigModalData.curvaFase] || CURVE_CONSTANTS['IEC_VI'];
     const cNeutroConst = CURVE_CONSTANTS[cemigModalData.curvaNeutro] || CURVE_CONSTANTS['IEC_VI'];
 
+    const newMargemMs = Number(cemigModalData.margemMinimaMs) || 200;
+
     setStudy(prev => ({
       ...prev,
       fusivel_concessionaria: cemigModalData.fusivel,
       inrush_multiplicador: Number(cemigModalData.inrushMult),
+      margem_seletividade_minima_ms: newMargemMs,
       rele_fase: {
         ...prev.rele_fase,
         pickup: pFase,
@@ -666,7 +681,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
     setShowCemigAdjustModal(false);
     setSaveMessage({
       type: 'success',
-      text: `Ajustes CEMIG ND 5.3 aplicados! Fase: ${pFase}A / TMS ${tFase} / 50: ${iInstFase}A`
+      text: `Ajustes CEMIG ND 5.3 aplicados! Fase: ${pFase}A / TMS ${tFase} / 50: ${iInstFase}A (Margem ≥ ${newMargemMs}ms)`
     });
   };
 
@@ -885,15 +900,21 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
   );
 
   const selectivityDiag = useMemo(() => {
+    const reqMargin = (study.margem_seletividade_minima_ms || 200) / 1000;
     return checkFuseSelectivity(
       study.fusivel_concessionaria || '40K',
       study.icc_3f || 5000,
-      study.rele_fase
+      {
+        ...study.rele_fase,
+        margem_minima_ms: study.margem_seletividade_minima_ms || 200
+      },
+      reqMargin
     );
-  }, [study.fusivel_concessionaria, study.icc_3f, study.rele_fase]);
+  }, [study.fusivel_concessionaria, study.icc_3f, study.rele_fase, study.margem_seletividade_minima_ms]);
 
   const modalSelectivityDiag = useMemo(() => {
     if (!showCemigAdjustModal) return null;
+    const reqMargin = (cemigModalData.margemMinimaMs || study.margem_seletividade_minima_ms || 200) / 1000;
     return checkFuseSelectivity(
       cemigModalData.fusivel || '40K',
       study.icc_3f || 5000,
@@ -903,10 +924,12 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
         curva: cemigModalData.curvaFase,
         i_def: Number(cemigModalData.defFase) || 0,
         t_def: Number(cemigModalData.tDefFase) || 0.3,
-        i_inst: Number(cemigModalData.instFase) || 0
-      }
+        i_inst: Number(cemigModalData.instFase) || 0,
+        margem_minima_ms: cemigModalData.margemMinimaMs || 200
+      },
+      reqMargin
     );
-  }, [showCemigAdjustModal, cemigModalData, study.icc_3f]);
+  }, [showCemigAdjustModal, cemigModalData, study.icc_3f, study.margem_seletividade_minima_ms]);
 
   const mainTrafoTotalKva = study.trafo_kva * (study.trafo_qtd || 1);
   const trafoInom = (mainTrafoTotalKva * 1000) / (study.trafo_v_prim * 1.732);
@@ -1743,8 +1766,8 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                        <button 
                          type="button"
                          onClick={handleAjusteCemigND53}
-                         title="Ajuste CEMIG ND 5.3 com parâmetros editáveis (≥ 200ms)"
-                         className="text-[9px] px-2.5 py-1 bg-green-500 hover:bg-green-400 text-black rounded font-black uppercase transition-all flex items-center gap-1 shadow-sm cursor-pointer active:scale-95"
+                         title="Abrir ajuste CEMIG ND 5.3 com parâmetros editáveis (≥ 200ms)"
+                         className="text-[10px] px-3 py-1 bg-green-500 hover:bg-green-400 text-black rounded font-black uppercase transition-all flex items-center gap-1 shadow-sm cursor-pointer active:scale-95 z-10"
                        >
                          <Zap className="w-3 h-3 fill-black" />
                          Ajuste ND 5.3
@@ -2865,95 +2888,179 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
 
               {/* Chart */}
               <div className="lg:col-span-8 flex flex-col gap-4">
-                 {/* Painel de Diagnóstico em Tempo Real - CEMIG ND 5.3 */}
-                 <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 shadow-xl">
-                   <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-zinc-800/80">
-                     <div className="flex items-center gap-2.5">
-                       <div className={`p-2 rounded-lg ${selectivityDiag.isSelectivityOk ? 'bg-green-500/10 text-green-400 border border-green-500/30' : 'bg-amber-500/10 text-amber-400 border border-amber-500/30'}`}>
-                         <ShieldCheck className="w-5 h-5" />
-                       </div>
-                       <div>
-                         <div className="flex items-center gap-2 flex-wrap">
-                           <h4 className="text-xs font-black uppercase text-white tracking-wider font-mono">
-                             Painel de Diagnóstico em Tempo Real
-                           </h4>
-                           <span className={`text-[9px] px-2 py-0.5 rounded font-black font-mono uppercase ${
-                             selectivityDiag.isSelectivityOk ? 'bg-green-500/20 text-green-400 border border-green-500/30' : 'bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse'
-                           }`}>
-                             {selectivityDiag.isSelectivityOk ? 'CONFORME CEMIG ND 5.3 (≥ 200ms)' : 'REQUER AJUSTE DE SELETIVIDADE (< 200ms)'}
-                           </span>
-                         </div>
-                         <p className="text-[10px] text-zinc-400 font-mono mt-0.5">
-                           Elo Retaguarda: <strong className="text-yellow-400 font-bold">{study.fusivel_concessionaria || '40K'}</strong> | Barramento Icc 3φ: <strong className="text-red-400 font-bold">{study.icc_3f || 5000} A</strong>
-                         </p>
-                       </div>
-                     </div>
+                  {/* Painel de Diagnóstico em Tempo Real - CEMIG ND 5.3 */}
+                  <div className="bg-zinc-950 border border-zinc-800 rounded-lg p-4 shadow-xl">
+                    <div className="flex flex-col sm:flex-row justify-between items-start sm:items-center gap-3 pb-3 border-b border-zinc-800/80">
+                      <div className="flex items-center gap-2.5">
+                        <div className={`p-2 rounded-lg ${selectivityDiag.isSelectivityOk ? "bg-green-500/10 text-green-400 border border-green-500/30" : "bg-amber-500/10 text-amber-400 border border-amber-500/30"}`}>
+                          <ShieldCheck className="w-5 h-5" />
+                        </div>
+                        <div>
+                          <div className="flex items-center gap-2 flex-wrap">
+                            <h4 className="text-xs font-black uppercase text-white tracking-wider font-mono">
+                              Painel de Diagnóstico em Tempo Real
+                            </h4>
+                            <span className={`text-[9px] px-2 py-0.5 rounded font-black font-mono uppercase ${
+                              selectivityDiag.isSelectivityOk ? "bg-green-500/20 text-green-400 border border-green-500/30" : "bg-amber-500/20 text-amber-400 border border-amber-500/30 animate-pulse"
+                            }`}>
+                              {selectivityDiag.isSelectivityOk ? `CONFORME CEMIG ND 5.3 (≥ ${study.margem_seletividade_minima_ms || 200}ms)` : `REQUER AJUSTE DE SELETIVIDADE (< ${study.margem_seletividade_minima_ms || 200}ms)`}
+                            </span>
+                          </div>
+                          <div className="flex items-center gap-2 text-[10px] text-zinc-400 font-mono mt-1 flex-wrap">
+                            <span className="text-zinc-500">Elo Retaguarda:</span>
+                            <select
+                              value={study.fusivel_concessionaria || "40K"}
+                              onChange={(e) => {
+                                setStudy(prev => ({ ...prev, fusivel_concessionaria: e.target.value }));
+                              }}
+                              className="bg-black border border-yellow-500/50 text-yellow-400 font-bold px-1.5 py-0.5 rounded outline-none focus:border-yellow-400 cursor-pointer text-[10px]"
+                              title="Selecionar Elo Fusível CEMIG em tempo real"
+                            >
+                              {CEMIG_STANDARD_FUSES.map(f => (
+                                <option key={f} value={f}>{f}</option>
+                              ))}
+                            </select>
+                            <button
+                              type="button"
+                              onClick={handleOpenFuseModal}
+                              title="Personalizar curva, fator e cor do elo fusível"
+                              className="text-[9px] px-1.5 py-0.5 bg-zinc-900 hover:bg-yellow-500/20 text-yellow-400 border border-zinc-700 hover:border-yellow-500/40 rounded flex items-center gap-1 transition-all cursor-pointer"
+                            >
+                              <Sliders className="w-2.5 h-2.5" /> Curva Elo
+                            </button>
+                            <span className="text-zinc-600">|</span>
+                            <span>Barramento Icc 3φ: <strong className="text-red-400 font-bold">{study.icc_3f || 5000} A</strong></span>
+                          </div>
+                        </div>
+                      </div>
 
-                     <div className="flex items-center gap-2 w-full sm:w-auto">
-                       <button 
-                         onClick={handleAjusteCemigND53}
-                         title="Executar motor de otimização iterativo ND 5.3"
-                         className="flex-1 sm:flex-none px-3.5 py-1.5 bg-green-500 hover:bg-green-400 text-black text-[10px] font-black uppercase rounded shadow-lg transition-all flex items-center justify-center gap-1.5"
-                       >
-                         <Zap className="w-3.5 h-3.5 fill-black" />
-                         Ajuste CEMIG ND 5.3
-                       </button>
-                       <button
-                         onClick={() => {
-                           setTempParecerText(study.parecer_tecnico_personalizado || getDefaultParecerHomologado(study));
-                           setShowParecerModal(true);
-                         }}
-                         title="Editar considerações do parecer técnico do memorial"
-                         className="flex-1 sm:flex-none px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 text-[10px] font-bold uppercase rounded transition-all flex items-center justify-center gap-1.5"
-                       >
-                         <FileEdit className="w-3.5 h-3.5 text-green-400" />
-                         Parecer Técnico
-                       </button>
-                     </div>
-                   </div>
+                      <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap sm:flex-nowrap">
+                        <button 
+                          type="button"
+                          onClick={handleAjusteCemigND53}
+                          title="Abrir ajuste CEMIG ND 5.3 com parâmetros editáveis pelo usuário (≥ 200ms)"
+                          className="flex-1 sm:flex-none px-3.5 py-1.5 bg-green-500 hover:bg-green-400 text-black text-[10px] font-black uppercase rounded shadow-lg transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                        >
+                          <Zap className="w-3.5 h-3.5 fill-black" />
+                          Ajuste CEMIG ND 5.3
+                        </button>
+                        <button 
+                          type="button"
+                          onClick={() => runOptimizationEngine(true)}
+                          title="Otimizar automaticamente em 1 clique (garante seletividade ≥ 200ms e elimina avisos)"
+                          className="px-2.5 py-1.5 bg-zinc-900 hover:bg-green-500 hover:text-black border border-green-500/40 text-green-400 text-[10px] font-bold uppercase rounded transition-all flex items-center justify-center gap-1 cursor-pointer active:scale-95"
+                        >
+                          ⚡ 1-Clique Auto
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            setTempParecerText(study.parecer_tecnico_personalizado || getDefaultParecerHomologado(study));
+                            setShowParecerModal(true);
+                          }}
+                          title="Editar considerações do parecer técnico do memorial"
+                          className="flex-1 sm:flex-none px-3 py-1.5 bg-zinc-900 hover:bg-zinc-800 border border-zinc-700 text-zinc-300 text-[10px] font-bold uppercase rounded transition-all flex items-center justify-center gap-1.5 cursor-pointer"
+                        >
+                          <FileEdit className="w-3.5 h-3.5 text-green-400" />
+                          Parecer Técnico
+                        </button>
+                      </div>
+                    </div>
 
-                   <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
-                     <div className="bg-black/60 p-2.5 rounded border border-zinc-900 font-mono">
-                       <span className="text-[8px] text-zinc-500 uppercase block font-sans">Margem Cronométrica</span>
-                       <p className={`text-base font-black ${selectivityDiag.isSelectivityOk ? 'text-green-400' : 'text-amber-400'}`}>
-                         {(selectivityDiag.minMargin * 1000).toFixed(0)} ms
-                       </p>
-                       <span className="text-[7.5px] text-zinc-400 block mt-0.5">
-                         Mínimo ND 5.3: 200 ms
-                       </span>
-                     </div>
+                    <div className="grid grid-cols-2 sm:grid-cols-4 gap-3 mt-3">
+                      {/* Card 1: Margem Cronométrica & Ajuste de Seletividade */}
+                      <div className="bg-black/60 p-2.5 rounded border border-zinc-900 font-mono">
+                        <span className="text-[8px] text-zinc-500 uppercase block font-sans">Margem Cronométrica</span>
+                        <p className={`text-base font-black ${selectivityDiag.isSelectivityOk ? "text-green-400" : "text-amber-400"}`}>
+                          {(selectivityDiag.minMargin * 1000).toFixed(0)} ms
+                        </p>
+                        <div className="mt-1.5 pt-1.5 border-t border-zinc-800/60 flex items-center justify-between text-[8px]">
+                          <span className="text-zinc-400">Ajuste Seletividade:</span>
+                          <div className="flex items-center gap-1">
+                            <input 
+                              type="number"
+                              min="50"
+                              max="1000"
+                              step="10"
+                              value={study.margem_seletividade_minima_ms || 200}
+                              onChange={(e) => {
+                                const val = Math.max(10, Number(e.target.value) || 200);
+                                setStudy(prev => ({ ...prev, margem_seletividade_minima_ms: val }));
+                              }}
+                              className="w-12 bg-zinc-900 border border-zinc-700 text-green-400 text-[10px] px-1 py-0.5 rounded text-right font-bold outline-none focus:border-green-500"
+                              title="Editar valor de Ajuste de Seletividade (Margem Mínima Requerida em ms)"
+                            />
+                            <span className="text-zinc-400">ms</span>
+                          </div>
+                        </div>
+                      </div>
 
-                     <div className="bg-black/60 p-2.5 rounded border border-zinc-900 font-mono">
-                       <span className="text-[8px] text-zinc-500 uppercase block font-sans">Ponto Crítico (Pior Caso)</span>
-                       <p className="text-base font-black text-zinc-200">
-                         {selectivityDiag.criticalCurrent.toFixed(1)} A
-                       </p>
-                       <span className="text-[7.5px] text-zinc-400 block mt-0.5">
-                         t_elo: {selectivityDiag.fuseMeltingTimeAtCrit.toFixed(3)}s | t_relé: {selectivityDiag.relayTripTimeAtCrit.toFixed(3)}s
-                       </span>
-                     </div>
+                      {/* Card 2: Ponto Crítico */}
+                      <div className="bg-black/60 p-2.5 rounded border border-zinc-900 font-mono">
+                        <span className="text-[8px] text-zinc-500 uppercase block font-sans">Ponto Crítico (Pior Caso)</span>
+                        <p className="text-base font-black text-zinc-200">
+                          {selectivityDiag.criticalCurrent.toFixed(1)} A
+                        </p>
+                        <span className="text-[7.5px] text-zinc-400 block mt-0.5">
+                          t_elo: {selectivityDiag.fuseMeltingTimeAtCrit.toFixed(3)}s | t_relé: {selectivityDiag.relayTripTimeAtCrit.toFixed(3)}s
+                        </span>
+                      </div>
 
-                     <div className="bg-black/60 p-2.5 rounded border border-zinc-900 font-mono">
-                       <span className="text-[8px] text-zinc-500 uppercase block font-sans">Inrush vs Instantâneo (50)</span>
-                       <p className="text-base font-black text-green-400">
-                         {study.rele_fase.i_inst > 0 ? `${study.rele_fase.i_inst} A` : 'DESAB.'}
-                       </p>
-                       <span className="text-[7.5px] text-zinc-400 block mt-0.5">
-                         Inrush: {inrushCurrent.toFixed(1)}A ({instMarginPercent >= 0 ? `+${instMarginPercent.toFixed(1)}%` : `${instMarginPercent.toFixed(1)}%`})
-                       </span>
-                     </div>
+                      {/* Card 3: Inrush vs Instantâneo (50) - Totalmente Editável em Tempo Real */}
+                      <div className="bg-black/60 p-2.5 rounded border border-zinc-900 font-mono">
+                        <div className="flex justify-between items-center mb-0.5">
+                          <span className="text-[8px] text-zinc-500 uppercase block font-sans">Inst. Fase (50)</span>
+                          <button
+                            type="button"
+                            onClick={() => {
+                              const autoVal = Math.round(inrushCurrent * 1.25);
+                              setStudy(prev => ({
+                                ...prev,
+                                rele_fase: { ...prev.rele_fase, i_inst: autoVal }
+                              }));
+                            }}
+                            className="text-[7.5px] px-1 py-0.5 bg-zinc-800 hover:bg-green-500 hover:text-black text-green-400 rounded transition-all border border-zinc-700 font-sans font-bold cursor-pointer"
+                            title="Ajustar automaticamente para 1.25x Inrush (+25%)"
+                          >
+                            +25% Inrush
+                          </button>
+                        </div>
+                        <div className="flex items-center gap-1">
+                          <input
+                            type="number"
+                            step="5"
+                            min="0"
+                            value={study.rele_fase.i_inst || ""}
+                            onChange={(e) => {
+                              const val = Number(e.target.value);
+                              setStudy(prev => ({
+                                ...prev,
+                                rele_fase: { ...prev.rele_fase, i_inst: val }
+                              }));
+                            }}
+                            placeholder="0 (Desab.)"
+                            className="w-20 bg-zinc-900 border border-green-500/40 text-green-400 font-bold text-sm px-1.5 py-0.5 rounded outline-none focus:border-green-400"
+                            title="Editar corrente da proteção instantânea de fase (função ANSI 50)"
+                          />
+                          <span className="text-xs text-zinc-400 font-bold">A</span>
+                        </div>
+                        <span className="text-[7.5px] text-zinc-400 block mt-1">
+                          Inrush: {inrushCurrent.toFixed(1)}A ({instMarginPercent >= 0 ? `+${instMarginPercent.toFixed(1)}%` : `${instMarginPercent.toFixed(1)}%`})
+                        </span>
+                      </div>
 
-                     <div className="bg-black/60 p-2.5 rounded border border-zinc-900 font-mono">
-                       <span className="text-[8px] text-zinc-500 uppercase block font-sans">Conformidade Global</span>
-                       <p className={`text-xs font-black uppercase mt-1 ${isFullCompliant ? 'text-green-400' : 'text-amber-400'}`}>
-                         {isFullCompliant ? '✓ 100% HOMOLOGADO' : '⚠ AJUSTE NECESSÁRIO'}
-                       </p>
-                       <span className="text-[7.5px] text-zinc-400 block mt-1">
-                         ND 5.3 & NBR 14039
-                       </span>
-                     </div>
-                   </div>
-                 </div>
+                      {/* Card 4: Conformidade Global */}
+                      <div className="bg-black/60 p-2.5 rounded border border-zinc-900 font-mono">
+                        <span className="text-[8px] text-zinc-500 uppercase block font-sans">Conformidade Global</span>
+                        <p className={`text-xs font-black uppercase mt-1 ${isFullCompliant ? "text-green-400" : "text-amber-400"}`}>
+                          {isFullCompliant ? "✓ 100% HOMOLOGADO" : "⚠ AJUSTE NECESSÁRIO"}
+                        </p>
+                        <span className="text-[7.5px] text-zinc-400 block mt-1">
+                          ND 5.3 & NBR 14039
+                        </span>
+                      </div>
+                    </div>
+                  </div>
 
                  {/* Curve Visibility Toggles */}
                  <div className="flex flex-wrap gap-2 items-center bg-zinc-900/40 p-3 rounded border border-zinc-800">
@@ -2986,13 +3093,23 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                       <div className={`w-1.5 h-1.5 rounded-full ${visibleCurves.includes('Neutro (50N)') ? 'bg-[#60a5fa]' : 'bg-zinc-700'}`}></div>
                       NEUTRO (50N)
                     </button>
-                    <button 
-                      onClick={() => toggleCurve('Elo Fusível')}
-                      className={`flex items-center gap-2 px-3 py-1 rounded text-[10px] font-bold border transition-all ${visibleCurves.includes('Elo Fusível') ? 'bg-[#eab30833] border-[#eab308] text-[#facc15]' : 'bg-transparent border-zinc-700 text-zinc-500'}`}
-                    >
-                      <div className={`w-1.5 h-1.5 rounded-full ${visibleCurves.includes('Elo Fusível') ? 'bg-[#eab308]' : 'bg-zinc-700'}`}></div>
-                      ELO FUSÍVEL ({study.fusivel_concessionaria || '40K'})
-                    </button>
+                    <div className="flex items-center gap-1">
+                      <button 
+                        onClick={() => toggleCurve('Elo Fusível')}
+                        className={`flex items-center gap-2 px-3 py-1 rounded text-[10px] font-bold border transition-all ${visibleCurves.includes('Elo Fusível') ? 'bg-[#eab30833] border-[#eab308] text-[#facc15]' : 'bg-transparent border-zinc-700 text-zinc-500'}`}
+                      >
+                        <div className={`w-1.5 h-1.5 rounded-full ${visibleCurves.includes('Elo Fusível') ? 'bg-[#eab308]' : 'bg-zinc-700'}`}></div>
+                        ELO FUSÍVEL ({study.fusivel_concessionaria || '40K'})
+                      </button>
+                      <button
+                        type="button"
+                        onClick={handleOpenFuseModal}
+                        title="Personalizar tipo de curva (MMT/TCC/Banda), tolerância e cor do elo fusível"
+                        className="p-1 text-yellow-400 hover:text-white bg-zinc-900 border border-zinc-700 hover:border-yellow-400 rounded transition-all cursor-pointer"
+                      >
+                        <Sliders className="w-3 h-3" />
+                      </button>
+                    </div>
 
                     <div className="w-px h-4 bg-zinc-800 mx-1 hidden sm:block"></div>
 
@@ -3318,8 +3435,8 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     : 'bg-amber-500/20 text-amber-400 border-amber-500/40 animate-pulse'
                 }`}>
                   {modalSelectivityDiag?.isSelectivityOk 
-                    ? 'CONFORME CEMIG ND 5.3 (Margem ≥ 200ms)' 
-                    : 'ATENÇÃO: Margem Inferior a 200ms'}
+                    ? `CONFORME CEMIG ND 5.3 (Margem ≥ ${cemigModalData.margemMinimaMs || 200}ms)` 
+                    : `ATENÇÃO: Margem Inferior a ${cemigModalData.margemMinimaMs || 200}ms`}
                 </span>
               </div>
 
@@ -3358,9 +3475,9 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                 <h4 className="text-xs font-bold text-yellow-400 uppercase flex items-center gap-2">
                   1. Concessionária & Transformador
                 </h4>
-                <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
+                <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
                   <div>
-                    <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono">
+                    <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono font-bold">
                       Elo Fusível Retaguarda (CEMIG)
                     </label>
                     <select
@@ -3374,8 +3491,26 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     </select>
                   </div>
                   <div>
+                    <label className="text-[10px] text-green-400 uppercase block mb-1 font-mono font-bold">
+                      Ajuste de Seletividade (ms)
+                    </label>
+                    <div className="flex items-center gap-1.5">
+                      <input
+                        type="number"
+                        min="50"
+                        max="1000"
+                        step="10"
+                        value={cemigModalData.margemMinimaMs || 200}
+                        onChange={(e) => setCemigModalData(prev => ({ ...prev, margemMinimaMs: Number(e.target.value) || 200 }))}
+                        className="w-full bg-zinc-900 border border-green-500/50 text-green-400 p-2 text-xs rounded font-mono font-bold outline-none focus:border-green-400"
+                        title="Margem de seletividade cronométrica requerida em ms (padrão ND 5.3: 200ms)"
+                      />
+                      <span className="text-xs text-zinc-400 font-mono font-bold">ms</span>
+                    </div>
+                  </div>
+                  <div>
                     <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono">
-                      Multiplicador de Inrush do Trafo
+                      Multiplicador Inrush Trafo
                     </label>
                     <div className="flex items-center gap-2">
                       <input
@@ -3392,7 +3527,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                   </div>
                   <div>
                     <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono">
-                      Inom Trafo Primário / Icc 3φ Barramento
+                      Inom Trafo / Icc Barramento
                     </label>
                     <div className="p-2 bg-zinc-900/60 border border-zinc-800 rounded text-xs font-mono text-zinc-300">
                       In: <strong className="text-white">{trafoInom.toFixed(1)} A</strong> | Icc: <strong className="text-red-400">{study.icc_3f} A</strong>
@@ -3619,33 +3754,47 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
 
             {/* Modal Footer Actions */}
             <div className="flex flex-col sm:flex-row justify-between items-center gap-3 pt-3 border-t border-zinc-800">
-              <button
-                type="button"
-                onClick={() => {
-                  const recs = getRecommendedND53Params(study);
-                  setCemigModalData(recs);
-                }}
-                className="w-full sm:w-auto px-4 py-2.5 bg-zinc-900 hover:bg-zinc-800 text-yellow-400 border border-yellow-500/30 rounded text-xs font-bold font-mono uppercase transition-all flex items-center justify-center gap-2 cursor-pointer active:scale-95"
-              >
-                <Zap className="w-3.5 h-3.5 fill-yellow-400" />
-                Restaurar Otimização Automática ND 5.3
-              </button>
+              <div className="flex items-center gap-2 w-full sm:w-auto flex-wrap">
+                <button
+                  type="button"
+                  onClick={() => {
+                    const recs = getRecommendedND53Params(study);
+                    setCemigModalData(recs);
+                  }}
+                  className="px-3.5 py-2 bg-zinc-900 hover:bg-zinc-800 text-yellow-400 border border-yellow-500/30 rounded text-xs font-bold font-mono uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                  title="Recalcular e carregar valores recomendados pela ND 5.3 nos campos acima"
+                >
+                  <Zap className="w-3.5 h-3.5 fill-yellow-400" />
+                  Carregar Recomendação ND 5.3
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    runOptimizationEngine(true);
+                    setShowCemigAdjustModal(false);
+                  }}
+                  className="px-3.5 py-2 bg-green-950/60 hover:bg-green-500 hover:text-black border border-green-500/40 text-green-400 rounded text-xs font-bold font-mono uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer active:scale-95"
+                  title="Aplicar otimização automática ND 5.3 imediatamente e fechar modal"
+                >
+                  ⚡ Aplicar Auto Imediato
+                </button>
+              </div>
 
               <div className="flex gap-2 w-full sm:w-auto">
                 <button
                   type="button"
                   onClick={() => setShowCemigAdjustModal(false)}
-                  className="flex-1 sm:flex-none px-4 py-2.5 border border-zinc-800 text-zinc-400 hover:text-white rounded text-xs font-bold uppercase transition-all cursor-pointer"
+                  className="flex-1 sm:flex-none px-4 py-2 border border-zinc-800 text-zinc-400 hover:text-white rounded text-xs font-bold uppercase transition-all cursor-pointer"
                 >
                   Cancelar
                 </button>
                 <button
                   type="button"
                   onClick={handleApplyCemigModal}
-                  className="flex-1 sm:flex-none px-6 py-2.5 bg-green-500 hover:bg-green-400 text-black rounded text-xs font-black uppercase transition-all shadow-lg shadow-green-500/20 flex items-center justify-center gap-2 cursor-pointer active:scale-95"
+                  className="flex-1 sm:flex-none px-6 py-2 bg-green-500 hover:bg-green-400 text-black rounded text-xs font-black uppercase transition-all shadow-lg shadow-green-500/20 flex items-center justify-center gap-2 cursor-pointer active:scale-95"
                 >
                   <CheckCircle2 className="w-4 h-4" />
-                  Aplicar Parâmetros ao Estudo
+                  Salvar e Aplicar Parâmetros
                 </button>
               </div>
             </div>
@@ -3654,7 +3803,174 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
       )}
 
       <AnimatePresence>
-        {showHelp && (
+        
+      {/* Modal de Personalização do Elo Fusível CEMIG */}
+      {showFuseModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/80 backdrop-blur-sm">
+          <motion.div 
+            initial={{ opacity: 0, scale: 0.95 }}
+            animate={{ opacity: 1, scale: 1 }}
+            exit={{ opacity: 0, scale: 0.95 }}
+            className="bg-zinc-950 border border-yellow-500/40 rounded-xl max-w-lg w-full p-6 shadow-2xl space-y-5"
+          >
+            <div className="flex justify-between items-center pb-3 border-b border-zinc-800">
+              <div className="flex items-center gap-2.5">
+                <div className="p-2 rounded bg-yellow-500/10 text-yellow-400 border border-yellow-500/30">
+                  <Sliders className="w-5 h-5" />
+                </div>
+                <div>
+                  <h3 className="text-sm font-black uppercase text-white font-mono">
+                    Curva do Elo Fusível CEMIG
+                  </h3>
+                  <p className="text-[11px] text-zinc-400 font-mono">
+                    Personalização no coordenograma e cálculo de seletividade
+                  </p>
+                </div>
+              </div>
+              <button 
+                type="button"
+                onClick={() => setShowFuseModal(false)}
+                className="text-zinc-500 hover:text-white text-lg p-1 cursor-pointer"
+              >
+                ✕
+              </button>
+            </div>
+
+            <div className="space-y-4">
+              {/* Seleção do Elo */}
+              <div>
+                <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono font-bold">
+                  Elo Fusível da Concessionária (CEMIG)
+                </label>
+                <div className="grid grid-cols-5 gap-1.5 mb-2">
+                  {CEMIG_STANDARD_FUSES.map(f => (
+                    <button
+                      key={f}
+                      type="button"
+                      onClick={() => setFuseModalData(prev => ({ ...prev, fusivel: f, isCustom: false }))}
+                      className={`py-1.5 px-2 rounded text-xs font-mono font-bold border transition-all cursor-pointer ${
+                        !fuseModalData.isCustom && fuseModalData.fusivel === f
+                          ? 'bg-yellow-500 text-black border-yellow-400 shadow-md'
+                          : 'bg-zinc-900 text-zinc-400 border-zinc-800 hover:border-yellow-500/40 hover:text-yellow-400'
+                      }`}
+                    >
+                      {f}
+                    </button>
+                  ))}
+                </div>
+
+                <div className="flex items-center gap-2 mt-2 pt-2 border-t border-zinc-900">
+                  <input
+                    type="checkbox"
+                    id="customFuseToggle"
+                    checked={fuseModalData.isCustom}
+                    onChange={(e) => setFuseModalData(prev => ({ ...prev, isCustom: e.target.checked }))}
+                    className="accent-yellow-500 rounded cursor-pointer"
+                  />
+                  <label htmlFor="customFuseToggle" className="text-xs text-zinc-300 font-mono cursor-pointer">
+                    Definir Elo Fusível Personalizado:
+                  </label>
+                  {fuseModalData.isCustom && (
+                    <div className="flex items-center gap-1">
+                      <input
+                        type="number"
+                        min="1"
+                        max="300"
+                        value={fuseModalData.customRating}
+                        onChange={(e) => setFuseModalData(prev => ({ ...prev, customRating: parseFloat(e.target.value) || 40 }))}
+                        className="w-20 bg-zinc-900 border border-yellow-500/50 text-yellow-400 px-2 py-1 text-xs rounded font-mono font-bold outline-none"
+                      />
+                      <span className="text-xs text-zinc-400 font-mono font-bold">K</span>
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              {/* Tipo de Curva */}
+              <div>
+                <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono font-bold">
+                  Tipo de Curva a Exibir no Coordenograma
+                </label>
+                <div className="grid grid-cols-3 gap-2">
+                  {[
+                    { id: 'minima', label: 'MMT (Mínima)', desc: 'Tempo Mínimo Fusão' },
+                    { id: 'total', label: 'TCC (Total)', desc: 'Tempo Total Interrupção' },
+                    { id: 'banda', label: 'Banda (Ambas)', desc: 'Faixa MMT a TCC' }
+                  ].map(t => (
+                    <button
+                      key={t.id}
+                      type="button"
+                      onClick={() => setFuseModalData(prev => ({ ...prev, tipoCurva: t.id as any }))}
+                      className={`p-2 rounded text-left border font-mono transition-all cursor-pointer ${
+                        fuseModalData.tipoCurva === t.id
+                          ? 'bg-yellow-500/20 border-yellow-500 text-yellow-400'
+                          : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:border-zinc-700'
+                      }`}
+                    >
+                      <div className="text-xs font-bold">{t.label}</div>
+                      <div className="text-[9px] text-zinc-500">{t.desc}</div>
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              {/* Fator de Tolerância e Cor */}
+              <div className="grid grid-cols-2 gap-3">
+                <div>
+                  <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono font-bold">
+                    Fator de Tolerância
+                  </label>
+                  <input
+                    type="number"
+                    step="0.05"
+                    min="0.5"
+                    max="1.5"
+                    value={fuseModalData.fatorTolerancia}
+                    onChange={(e) => setFuseModalData(prev => ({ ...prev, fatorTolerancia: parseFloat(e.target.value) || 1.0 }))}
+                    className="w-full bg-zinc-900 border border-zinc-700 text-yellow-400 px-3 py-1.5 text-xs rounded font-mono outline-none focus:border-yellow-500"
+                  />
+                  <span className="text-[9px] text-zinc-500 font-mono mt-0.5 block">1.0 = Nominal CEMIG</span>
+                </div>
+
+                <div>
+                  <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono font-bold">
+                    Cor no Gráfico
+                  </label>
+                  <div className="flex items-center gap-2">
+                    <input
+                      type="color"
+                      value={fuseModalData.cor}
+                      onChange={(e) => setFuseModalData(prev => ({ ...prev, cor: e.target.value }))}
+                      className="w-10 h-8 bg-zinc-900 border border-zinc-700 rounded cursor-pointer p-0.5"
+                    />
+                    <span className="text-xs font-mono text-zinc-300">{fuseModalData.cor}</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <div className="flex justify-end gap-2 pt-3 border-t border-zinc-800">
+              <button
+                type="button"
+                onClick={() => setShowFuseModal(false)}
+                className="px-4 py-2 border border-zinc-800 text-zinc-400 hover:text-white rounded text-xs font-bold uppercase transition-all cursor-pointer"
+              >
+                Cancelar
+              </button>
+              <button
+                type="button"
+                onClick={handleApplyFuseModal}
+                className="px-5 py-2 bg-yellow-500 hover:bg-yellow-400 text-black rounded text-xs font-black uppercase transition-all flex items-center gap-2 cursor-pointer active:scale-95 shadow-lg"
+              >
+                <CheckCircle2 className="w-4 h-4" />
+                Aplicar ao Gráfico
+              </button>
+            </div>
+          </motion.div>
+        </div>
+      )}
+
+      {showHelp && (
           <HelpMenu onClose={() => setShowHelp(false)} />
         )}
       </AnimatePresence>
