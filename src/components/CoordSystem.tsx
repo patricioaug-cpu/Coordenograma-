@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { CONCESSIONARIAS, Concessionaria } from '../constants/concessionarias';
 import { COMMONLY_USED_RELAYS } from '../constants/relays';
 import { generateFullRelayCurve, CurveType, calculateInominal, calculateANSIPoints, calculateInrushPoint, calculateMotorInrush, calculateInPlant, CURVE_CONSTANTS, getTechnicalSuggestions, calculateTime, validateTC, calculateActualRelayTime, calculateSmallestTrafoANSI, calculateMinShortCircuit, validateInstPhaseND53 } from '../lib/protection-utils';
@@ -13,6 +13,134 @@ import { AdminPanel } from './AdminPanel';
 import { ReportView } from './ReportView';
 import { FieldInfo } from './ui/FieldInfo';
 import { HelpMenu } from './HelpMenu';
+import { RelayDiagramModal } from './RelayDiagramModal';
+
+interface NumberFieldProps extends Omit<React.InputHTMLAttributes<HTMLInputElement>, 'value' | 'onChange'> {
+  value: number | string | undefined | null;
+  onChange: (value: number) => void;
+  fallbackValue?: number;
+  allowEmpty?: boolean;
+}
+
+const NumberField: React.FC<NumberFieldProps> = ({
+  value,
+  onChange,
+  onFocus,
+  onBlur,
+  onKeyDown,
+  fallbackValue,
+  allowEmpty,
+  step = 1,
+  className,
+  ...rest
+}) => {
+  const formatVal = (v: number | string | undefined | null) => {
+    if (v === undefined || v === null || v === '') return '';
+    const num = Number(v);
+    if (isNaN(num)) return '';
+    return String(num);
+  };
+
+  const [text, setText] = useState<string>(() => formatVal(value));
+  const [isFocused, setIsFocused] = useState(false);
+  const lastEmittedRef = useRef<number | null>(null);
+
+  useEffect(() => {
+    if (!isFocused) {
+      setText(formatVal(value));
+    } else if (value !== undefined && value !== null && !isNaN(Number(value))) {
+      if (lastEmittedRef.current !== null && Number(value) !== lastEmittedRef.current) {
+        setText(formatVal(value));
+      }
+    }
+  }, [value, isFocused]);
+
+  const handleChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+    let raw = e.target.value;
+    raw = raw.replace(',', '.');
+
+    if (raw !== '' && raw !== '-' && !/^-?\d*\.?\d*$/.test(raw)) {
+      return;
+    }
+
+    setText(raw);
+
+    if (raw === '' || raw === '-' || raw === '.') {
+      lastEmittedRef.current = 0;
+      onChange(0);
+    } else {
+      const parsed = parseFloat(raw);
+      if (!isNaN(parsed)) {
+        lastEmittedRef.current = parsed;
+        onChange(parsed);
+      }
+    }
+  };
+
+  const handleKeyDown = (e: React.KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === 'ArrowUp' || e.key === 'ArrowDown') {
+      e.preventDefault();
+      const current = parseFloat(text) || 0;
+      const stepNum = typeof step === 'string' ? parseFloat(step) : Number(step) || 1;
+      const next = e.key === 'ArrowUp' 
+        ? +(current + stepNum).toFixed(4)
+        : +(current - stepNum).toFixed(4);
+      
+      const bounded = rest.min !== undefined && next < Number(rest.min)
+        ? Number(rest.min)
+        : rest.max !== undefined && next > Number(rest.max)
+          ? Number(rest.max)
+          : next;
+
+      const boundedStr = String(bounded);
+      setText(boundedStr);
+      lastEmittedRef.current = bounded;
+      onChange(bounded);
+    }
+    if (onKeyDown) onKeyDown(e);
+  };
+
+  const handleBlur = (e: React.FocusEvent<HTMLInputElement>) => {
+    setIsFocused(false);
+    if (text.trim() === '' || isNaN(Number(text))) {
+      if (fallbackValue !== undefined) {
+        setText(String(fallbackValue));
+        lastEmittedRef.current = fallbackValue;
+        onChange(fallbackValue);
+      } else if (!allowEmpty) {
+        const valToSet = value !== undefined && value !== null && !isNaN(Number(value)) ? Number(value) : 0;
+        setText(String(valToSet));
+        lastEmittedRef.current = valToSet;
+        onChange(valToSet);
+      }
+    } else {
+      const parsed = parseFloat(text);
+      setText(String(parsed));
+      lastEmittedRef.current = parsed;
+      onChange(parsed);
+    }
+    if (onBlur) onBlur(e);
+  };
+
+  const handleFocus = (e: React.FocusEvent<HTMLInputElement>) => {
+    setIsFocused(true);
+    if (onFocus) onFocus(e);
+  };
+
+  return (
+    <input
+      {...rest}
+      type="text"
+      inputMode="decimal"
+      value={text}
+      onChange={handleChange}
+      onKeyDown={handleKeyDown}
+      onFocus={handleFocus}
+      onBlur={handleBlur}
+      className={className}
+    />
+  );
+};
 
 interface Equipamento {
   id: string;
@@ -188,6 +316,7 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
   });
 
   const [showFuseModal, setShowFuseModal] = useState(false);
+  const [showRelayDiagramModal, setShowRelayDiagramModal] = useState(false);
   const [fuseModalData, setFuseModalData] = useState({
     fusivel: '40K',
     isCustom: false,
@@ -1369,29 +1498,27 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <div className="grid grid-cols-3 gap-4">
                       <div>
                         <FieldInfo label="Dem. Contratada (kW)" description="Potência ativa máxima permitida pelo contrato atual com a concessionária." />
-                        <input 
-                          type="number" 
+                        <NumberField 
                           value={study.demanda_contratada}
-                          onChange={(e) => setStudy({...study, demanda_contratada: Number(e.target.value)})}
+                          onChange={(val) => setStudy({...study, demanda_contratada: val})}
                           className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
                         />
                       </div>
                       <div>
                         <FieldInfo label="Dem. Nova (kW)" description="Nova demanda total do projeto após expansão ou nova instalação." />
-                        <input 
-                          type="number" 
+                        <NumberField 
                           value={study.demanda_nova}
-                          onChange={(e) => setStudy({...study, demanda_nova: Number(e.target.value)})}
+                          onChange={(val) => setStudy({...study, demanda_nova: val})}
                           className="w-full bg-black border border-zinc-800 text-red-500 p-2 text-xs rounded outline-none focus:border-red-500 transition-all font-mono"
                         />
                       </div>
                       <div>
                         <FieldInfo label="F.P. (0.92)" description="Fator de potência considerado no estudo (padrão 0.92 para evitar multas)." />
-                        <input 
-                          type="number" 
+                        <NumberField 
                           step="0.01"
                           value={study.fator_potencia}
-                          onChange={(e) => setStudy({...study, fator_potencia: Number(e.target.value)})}
+                          fallbackValue={0.92}
+                          onChange={(val) => setStudy({...study, fator_potencia: val})}
                           className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
                         />
                       </div>
@@ -1501,28 +1628,29 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       <div>
                         <FieldInfo label="Trafo (kVA)" description="Potência nominal do transformador principal da instalação." />
-                        <input 
-                          type="number" 
+                        <NumberField 
                           value={study.trafo_kva}
-                          onChange={(e) => setStudy({...study, trafo_kva: Number(e.target.value)})}
+                          fallbackValue={500}
+                          onChange={(val) => setStudy({...study, trafo_kva: val})}
                           className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
                         />
                       </div>
                       <div>
                         <FieldInfo label="Quantidade" description="Quantidade de transformadores de mesma potência operando em paralelo no banco principal." />
-                        <input 
-                          type="number" 
-                          value={study.trafo_qtd || 1}
-                          onChange={(e) => setStudy({...study, trafo_qtd: Number(e.target.value)})}
+                        <NumberField 
+                          value={study.trafo_qtd}
+                          fallbackValue={1}
+                          onChange={(val) => setStudy({...study, trafo_qtd: val})}
                           className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
                         />
                       </div>
                       <div>
                         <FieldInfo label="Imp (%)" description="Impedância percentual de curto-circuito do transformador." />
-                        <input 
-                          type="number" 
+                        <NumberField 
+                          step="0.1"
                           value={study.trafo_z}
-                          onChange={(e) => setStudy({...study, trafo_z: Number(e.target.value)})}
+                          fallbackValue={5}
+                          onChange={(val) => setStudy({...study, trafo_z: val})}
                           className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
                         />
                       </div>
@@ -1530,19 +1658,19 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 mt-4">
                       <div>
                         <FieldInfo label="V. Primária (V)" description="Tensão nominal no lado de alta do transformador." />
-                        <input 
-                          type="number" 
+                        <NumberField 
                           value={study.trafo_v_prim}
-                          onChange={(e) => setStudy({...study, trafo_v_prim: Number(e.target.value)})}
+                          fallbackValue={13800}
+                          onChange={(val) => setStudy({...study, trafo_v_prim: val})}
                           className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
                         />
                       </div>
                       <div>
                         <FieldInfo label="V. Secundária (V)" description="Tensão nominal no lado de baixa do transformador." />
-                        <input 
-                          type="number" 
+                        <NumberField 
                           value={study.trafo_v_sec}
-                          onChange={(e) => setStudy({...study, trafo_v_sec: Number(e.target.value)})}
+                          fallbackValue={220}
+                          onChange={(val) => setStudy({...study, trafo_v_sec: val})}
                           className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
                         />
                       </div>
@@ -1618,19 +1746,19 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <div className="grid grid-cols-1 sm:grid-cols-4 gap-4 mt-4">
                       <div>
                         <FieldInfo label="Icc 3φ (A)" description="Corrente de curto-circuito trifásico máxima no ponto de entrega." />
-                        <input 
-                          type="number" 
+                        <NumberField 
                           value={study.icc_3f}
-                          onChange={(e) => setStudy({...study, icc_3f: Number(e.target.value)})}
+                          fallbackValue={5000}
+                          onChange={(val) => setStudy({...study, icc_3f: val})}
                           className="w-full bg-black border border-red-900/50 text-red-500 p-2 text-xs rounded outline-none focus:border-red-500 transition-all font-mono"
                         />
                       </div>
                       <div>
                         <FieldInfo label="Icc 1φ (A)" description="Corrente de curto-circuito monofásico máxima (se aplicável)." />
-                        <input 
-                          type="number" 
+                        <NumberField 
                           value={study.icc_1f}
-                          onChange={(e) => setStudy({...study, icc_1f: Number(e.target.value)})}
+                          fallbackValue={1200}
+                          onChange={(val) => setStudy({...study, icc_1f: val})}
                           className="w-full bg-black border border-blue-900/50 text-blue-500 p-2 text-xs rounded outline-none focus:border-blue-500 transition-all font-mono"
                         />
                       </div>
@@ -1648,11 +1776,11 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                       </div>
                       <div>
                         <FieldInfo label="Inrush (x In)" description="Multiplicador de corrente de magnetização Inrush do trafo (ND-5.3: 8x com t=0.1s)." />
-                        <input 
-                          type="number" 
+                        <NumberField 
                           step="0.5"
-                          value={study.inrush_multiplicador || 8}
-                          onChange={(e) => setStudy({...study, inrush_multiplicador: Number(e.target.value)})}
+                          value={study.inrush_multiplicador}
+                          fallbackValue={8}
+                          onChange={(val) => setStudy({...study, inrush_multiplicador: val})}
                           placeholder="8"
                           className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
                         />
@@ -1705,10 +1833,9 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                             <label className="text-[9px] text-zinc-500 uppercase block">
                               Potência {eq.tipo === 'Transformador' ? '(kVA)' : eq.tipo === 'Motor' ? '(kW)' : '(kVA)'}
                             </label>
-                            <input 
-                              type="number" 
+                            <NumberField 
                               value={eq.kva}
-                              onChange={(e) => updateEquipamento(eq.id, 'kva', Number(e.target.value))}
+                              onChange={(val) => updateEquipamento(eq.id, 'kva', val)}
                               placeholder={eq.tipo === 'Motor' ? 'kW' : 'kVA'}
                               className="w-full bg-zinc-900 border border-zinc-800 text-green-400 p-1 text-[10px] rounded font-mono"
                             />
@@ -1720,28 +1847,29 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                              <div className="grid grid-cols-3 gap-2 mb-2 border-t border-zinc-800 pt-2">
                                 <div>
                                    <label className="text-[8px] text-zinc-600 uppercase block">Z (%)</label>
-                                   <input 
-                                     type="number" 
+                                   <NumberField 
+                                     step="0.1"
                                      value={eq.z}
-                                     onChange={(e) => updateEquipamento(eq.id, 'z', Number(e.target.value))}
+                                     fallbackValue={5}
+                                     onChange={(val) => updateEquipamento(eq.id, 'z', val)}
                                      className="w-full bg-black border border-zinc-900 text-zinc-400 p-1 text-[9px] rounded font-mono"
                                    />
                                 </div>
                                 <div>
                                    <label className="text-[8px] text-zinc-600 uppercase block">V. Prim (V)</label>
-                                   <input 
-                                     type="number" 
+                                   <NumberField 
                                      value={eq.v_prim}
-                                     onChange={(e) => updateEquipamento(eq.id, 'v_prim', Number(e.target.value))}
+                                     fallbackValue={13800}
+                                     onChange={(val) => updateEquipamento(eq.id, 'v_prim', val)}
                                      className="w-full bg-black border border-zinc-900 text-zinc-400 p-1 text-[9px] rounded font-mono"
                                    />
                                 </div>
                                 <div>
                                    <label className="text-[8px] text-zinc-600 uppercase block">V. Sec (V)</label>
-                                   <input 
-                                     type="number" 
+                                   <NumberField 
                                      value={eq.v_sec}
-                                     onChange={(e) => updateEquipamento(eq.id, 'v_sec', Number(e.target.value))}
+                                     fallbackValue={220}
+                                     onChange={(val) => updateEquipamento(eq.id, 'v_sec', val)}
                                      className="w-full bg-black border border-zinc-900 text-zinc-400 p-1 text-[9px] rounded font-mono"
                                    />
                                 </div>
@@ -1774,10 +1902,10 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                         <div className="grid grid-cols-4 gap-2">
                           <div className="col-span-1">
                             <label className="text-[9px] text-zinc-500 uppercase block">Qtd</label>
-                            <input 
-                              type="number" 
+                            <NumberField 
                               value={eq.qtd}
-                              onChange={(e) => updateEquipamento(eq.id, 'qtd', Number(e.target.value))}
+                              fallbackValue={1}
+                              onChange={(val) => updateEquipamento(eq.id, 'qtd', val)}
                               className="w-full bg-zinc-900 border border-zinc-800 text-green-400 p-1 text-[10px] rounded font-mono"
                             />
                           </div>
@@ -1937,7 +2065,20 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                         </div>
                       </div>
                       <div>
-                        <FieldInfo label="Modelo" description="Modelo comercial exato do relé para verificação de manuais." />
+                        <div className="flex justify-between items-center mb-1">
+                          <FieldInfo label="Modelo" description="Modelo comercial exato do relé para verificação de manuais." />
+                          {study.rele_modelo && study.rele_modelo !== '' && (
+                            <button
+                              type="button"
+                              onClick={() => setShowRelayDiagramModal(true)}
+                              title="Abrir diagrama de ligação do relé selecionado em tela cheia"
+                              className="text-[9px] px-2 py-0.5 bg-blue-950/70 hover:bg-blue-600 text-blue-400 hover:text-white border border-blue-500/40 rounded flex items-center gap-1 font-mono font-bold transition-all cursor-pointer shadow-sm active:scale-95"
+                            >
+                              <Layers className="w-3 h-3 text-blue-400" />
+                              Diagrama de Ligação
+                            </button>
+                          )}
+                        </div>
                         <div className="space-y-2">
                           {study.rele_marca && COMMONLY_USED_RELAYS.find(r => r.manufacturer === study.rele_marca) ? (
                             <>
@@ -1986,6 +2127,17 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                               className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 transition-all font-mono"
                             />
                           )}
+
+                          {study.rele_modelo && study.rele_modelo !== '' && (
+                            <button
+                              type="button"
+                              onClick={() => setShowRelayDiagramModal(true)}
+                              className="w-full py-1 px-2 bg-zinc-900 hover:bg-blue-600/20 text-blue-400 hover:text-blue-300 border border-blue-500/30 hover:border-blue-500/60 rounded text-[10px] font-mono font-bold flex items-center justify-center gap-1.5 transition-all cursor-pointer"
+                            >
+                              <Layers className="w-3.5 h-3.5" />
+                              Ver Diagrama de Ligação do {study.rele_modelo} (Tela Cheia)
+                            </button>
+                          )}
                         </div>
                       </div>
                     </div>
@@ -2032,21 +2184,20 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                                <FieldInfo label="Pickup 51 (A)" description="Corrente de partida da unidade temporizada." />
                                {study.isAutoEnabled && <Zap className="w-3 h-3 text-yellow-500 animate-pulse" title="Ajustado Automáticamente" />}
                              </div>
-                             <input 
-                               type="number" 
+                             <NumberField 
                                value={study.rele_fase.pickup}
                                readOnly={study.isAutoEnabled}
-                               onChange={(e) => setStudy({...study, rele_fase: {...study.rele_fase, pickup: Number(e.target.value)}})}
+                               onChange={(val) => setStudy({...study, rele_fase: {...study.rele_fase, pickup: val}})}
                                className={`w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 font-mono ${study.isAutoEnabled ? 'opacity-70 cursor-not-allowed border-yellow-500/30' : ''}`}
                              />
                            </div>
                            <div>
                              <FieldInfo label="TMS / Dial (51)" description="Ajuste de tempo da curva temporizada." />
-                             <input 
-                               type="number" 
+                             <NumberField 
                                step="0.01"
                                value={study.rele_fase.tms}
-                               onChange={(e) => setStudy({...study, rele_fase: {...study.rele_fase, tms: Number(e.target.value)}})}
+                               fallbackValue={0.1}
+                               onChange={(val) => setStudy({...study, rele_fase: {...study.rele_fase, tms: val}})}
                                className="w-full bg-black border border-zinc-800 text-green-400 p-2 text-xs rounded outline-none focus:border-green-500 font-mono"
                              />
                            </div>
@@ -2060,20 +2211,18 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                            <div className="grid grid-cols-2 gap-3">
                               <div>
                                 <label className="text-[9px] text-zinc-500 uppercase block mb-1">Corrente (A)</label>
-                                <input 
-                                  type="number" 
+                                <NumberField 
                                   value={study.rele_fase.i_def}
-                                  onChange={(e) => setStudy({...study, rele_fase: {...study.rele_fase, i_def: Number(e.target.value)}})}
+                                  onChange={(val) => setStudy({...study, rele_fase: {...study.rele_fase, i_def: val}})}
                                   className="w-full bg-black border border-zinc-900 text-green-500 p-2 text-xs rounded outline-none"
                                 />
                               </div>
                               <div>
                                 <label className="text-[9px] text-zinc-500 uppercase block mb-1">Tempo (s)</label>
-                                <input 
-                                  type="number" 
+                                <NumberField 
                                   step="0.05"
                                   value={study.rele_fase.t_def}
-                                  onChange={(e) => setStudy({...study, rele_fase: {...study.rele_fase, t_def: Number(e.target.value)}})}
+                                  onChange={(val) => setStudy({...study, rele_fase: {...study.rele_fase, t_def: val}})}
                                   className="w-full bg-black border border-zinc-900 text-green-500 p-2 text-xs rounded outline-none"
                                 />
                               </div>
@@ -2089,11 +2238,10 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                            </div>
                            <div>
                               <FieldInfo label="Corrente Instantânea (A)" description="Pickup da unidade 50 de fase. Segundo a CEMIG ND-5.3: menor valor possível que não provoque atuação na energização, no máximo 5% acima do Inrush, e sem superar o menor curto-circuito nem o ponto ANSI do menor transformador." />
-                              <input 
-                                type="number" 
+                              <NumberField 
                                 step="1"
                                 value={study.rele_fase.i_inst}
-                                onChange={(e) => setStudy({...study, rele_fase: {...study.rele_fase, i_inst: Number(e.target.value)}})}
+                                onChange={(val) => setStudy({...study, rele_fase: {...study.rele_fase, i_inst: val}})}
                                 className={`w-full bg-black border ${instPhaseValidation.isValid ? 'border-zinc-700 focus:border-green-500' : 'border-amber-500/80 focus:border-amber-400'} text-green-400 p-2 text-xs rounded outline-none font-mono font-bold transition-all`}
                               />
                               <div className="mt-1.5 space-y-1 font-mono text-[8px]">
@@ -2115,31 +2263,28 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                         <div className="bg-zinc-950/50 p-4 rounded-lg border border-zinc-900 grid grid-cols-3 gap-4">
                            <div>
                              <label className="text-[8px] text-zinc-600 uppercase block mb-1">Parâmetro A</label>
-                             <input 
-                               type="number" 
+                             <NumberField 
                                step="0.0001"
                                value={study.rele_fase.A}
-                               onChange={(e) => setStudy({...study, rele_fase: {...study.rele_fase, A: Number(e.target.value)}})}
+                               onChange={(val) => setStudy({...study, rele_fase: {...study.rele_fase, A: val}})}
                                className="w-full bg-black border border-zinc-900 text-zinc-500 p-1.5 text-[10px] rounded font-mono"
                              />
                            </div>
                            <div>
                              <label className="text-[8px] text-zinc-600 uppercase block mb-1">Parâmetro B</label>
-                             <input 
-                               type="number" 
+                             <NumberField 
                                step="0.0001"
                                value={study.rele_fase.B}
-                               onChange={(e) => setStudy({...study, rele_fase: {...study.rele_fase, B: Number(e.target.value)}})}
+                               onChange={(val) => setStudy({...study, rele_fase: {...study.rele_fase, B: val}})}
                                className="w-full bg-black border border-zinc-900 text-zinc-500 p-1.5 text-[10px] rounded font-mono"
                              />
                            </div>
                            <div>
                              <label className="text-[8px] text-zinc-600 uppercase block mb-1">Potência P</label>
-                             <input 
-                               type="number" 
+                             <NumberField 
                                step="0.0001"
                                value={study.rele_fase.P}
-                               onChange={(e) => setStudy({...study, rele_fase: {...study.rele_fase, P: Number(e.target.value)}})}
+                               onChange={(val) => setStudy({...study, rele_fase: {...study.rele_fase, P: val}})}
                                className="w-full bg-black border border-zinc-900 text-zinc-500 p-1.5 text-[10px] rounded font-mono"
                              />
                            </div>
@@ -2190,21 +2335,20 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                                <FieldInfo label="Pickup 51N (A)" description="Sensibilidade de neutro para partida." />
                                {study.isAutoEnabled && <Zap className="w-3 h-3 text-yellow-500 animate-pulse" title="Ajustado Automáticamente" />}
                              </div>
-                             <input 
-                               type="number" 
+                             <NumberField 
                                value={study.rele_neutro.pickup}
                                readOnly={study.isAutoEnabled}
-                               onChange={(e) => setStudy({...study, rele_neutro: {...study.rele_neutro, pickup: Number(e.target.value)}})}
+                               onChange={(val) => setStudy({...study, rele_neutro: {...study.rele_neutro, pickup: val}})}
                                className={`w-full bg-black border border-zinc-800 text-blue-400 p-2 text-xs rounded outline-none focus:border-blue-500 font-mono ${study.isAutoEnabled ? 'opacity-70 cursor-not-allowed border-yellow-500/30' : ''}`}
                              />
                            </div>
                            <div>
                              <FieldInfo label="TMS / Dial (51N)" description="Ajuste de tempo da unidade de neutro." />
-                             <input 
-                               type="number" 
+                             <NumberField 
                                step="0.01"
                                value={study.rele_neutro.tms}
-                               onChange={(e) => setStudy({...study, rele_neutro: {...study.rele_neutro, tms: Number(e.target.value)}})}
+                               fallbackValue={0.1}
+                               onChange={(val) => setStudy({...study, rele_neutro: {...study.rele_neutro, tms: val}})}
                                className="w-full bg-black border border-zinc-800 text-blue-400 p-2 text-xs rounded outline-none focus:border-blue-500 font-mono"
                              />
                            </div>
@@ -2218,20 +2362,18 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                            <div className="grid grid-cols-2 gap-3">
                               <div>
                                 <label className="text-[9px] text-zinc-500 uppercase block mb-1">Corrente (A)</label>
-                                <input 
-                                  type="number" 
+                                <NumberField 
                                   value={study.rele_neutro.i_def}
-                                  onChange={(e) => setStudy({...study, rele_neutro: {...study.rele_neutro, i_def: Number(e.target.value)}})}
+                                  onChange={(val) => setStudy({...study, rele_neutro: {...study.rele_neutro, i_def: val}})}
                                   className="w-full bg-black border border-zinc-900 text-blue-500 p-2 text-xs rounded outline-none"
                                 />
                               </div>
                               <div>
                                 <label className="text-[9px] text-zinc-500 uppercase block mb-1">Tempo (s)</label>
-                                <input 
-                                  type="number" 
+                                <NumberField 
                                   step="0.05"
                                   value={study.rele_neutro.t_def}
-                                  onChange={(e) => setStudy({...study, rele_neutro: {...study.rele_neutro, t_def: Number(e.target.value)}})}
+                                  onChange={(val) => setStudy({...study, rele_neutro: {...study.rele_neutro, t_def: val}})}
                                   className="w-full bg-black border border-zinc-900 text-blue-500 p-2 text-xs rounded outline-none"
                                 />
                               </div>
@@ -2242,11 +2384,10 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                            <h4 className="text-[9px] font-black text-blue-500 uppercase tracking-tighter mb-2">Instantânea (50N)</h4>
                            <div>
                               <FieldInfo label="Corrente Instantânea (A)" description="Pickup da unidade 50N de neutro. Deve garantir atuação rápida em faltas monofásicas francas." />
-                              <input 
-                                type="number" 
+                              <NumberField 
                                 step="1"
                                 value={study.rele_neutro.i_inst}
-                                onChange={(e) => setStudy({...study, rele_neutro: {...study.rele_neutro, i_inst: Number(e.target.value)}})}
+                                onChange={(val) => setStudy({...study, rele_neutro: {...study.rele_neutro, i_inst: val}})}
                                 className="w-full bg-black border border-zinc-700 text-blue-400 p-2 text-xs rounded outline-none focus:border-blue-500 font-mono font-bold transition-all"
                               />
                               <span className="text-[8px] text-zinc-400 font-mono mt-1.5 block">
@@ -2261,31 +2402,28 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                         <div className="bg-zinc-950/50 p-4 rounded-lg border border-zinc-900 grid grid-cols-3 gap-4">
                            <div>
                              <label className="text-[8px] text-zinc-600 uppercase block mb-1">Parâmetro A</label>
-                             <input 
-                               type="number" 
+                             <NumberField 
                                step="0.0001"
                                value={study.rele_neutro.A}
-                               onChange={(e) => setStudy({...study, rele_neutro: {...study.rele_neutro, A: Number(e.target.value)}})}
+                               onChange={(val) => setStudy({...study, rele_neutro: {...study.rele_neutro, A: val}})}
                                className="w-full bg-black border border-zinc-900 text-zinc-500 p-1.5 text-[10px] rounded font-mono"
                              />
                            </div>
                            <div>
                              <label className="text-[8px] text-zinc-600 uppercase block mb-1">Parâmetro B</label>
-                             <input 
-                               type="number" 
+                             <NumberField 
                                step="0.0001"
                                value={study.rele_neutro.B}
-                               onChange={(e) => setStudy({...study, rele_neutro: {...study.rele_neutro, B: Number(e.target.value)}})}
+                               onChange={(val) => setStudy({...study, rele_neutro: {...study.rele_neutro, B: val}})}
                                className="w-full bg-black border border-zinc-900 text-zinc-500 p-1.5 text-[10px] rounded font-mono"
                              />
                            </div>
                            <div>
                              <label className="text-[8px] text-zinc-600 uppercase block mb-1">Potência P</label>
-                             <input 
-                               type="number" 
+                             <NumberField 
                                step="0.0001"
                                value={study.rele_neutro.P}
-                               onChange={(e) => setStudy({...study, rele_neutro: {...study.rele_neutro, P: Number(e.target.value)}})}
+                               onChange={(val) => setStudy({...study, rele_neutro: {...study.rele_neutro, P: val}})}
                                className="w-full bg-black border border-zinc-900 text-zinc-500 p-1.5 text-[10px] rounded font-mono"
                              />
                            </div>
@@ -2483,19 +2621,19 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                                 <div className="grid grid-cols-2 gap-2">
                                   <div>
                                     <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Sub-Freq (Hz)</label>
-                                    <input 
-                                      type="number" step="0.1"
+                                    <NumberField 
+                                      step="0.1"
                                       value={study.funcoes_adicionais[func].f_low}
-                                      onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], f_low: Number(e.target.value)}}})}
+                                      onChange={(val) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], f_low: val}}})}
                                       className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
                                     />
                                   </div>
                                   <div>
                                     <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Sob-Freq (Hz)</label>
-                                    <input 
-                                      type="number" step="0.1"
+                                    <NumberField 
+                                      step="0.1"
                                       value={study.funcoes_adicionais[func].f_high}
-                                      onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], f_high: Number(e.target.value)}}})}
+                                      onChange={(val) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], f_high: val}}})}
                                       className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
                                     />
                                   </div>
@@ -2503,19 +2641,19 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                                 <div className="grid grid-cols-2 gap-2">
                                   <div>
                                     <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">T. Sub (s)</label>
-                                    <input 
-                                      type="number" step="0.05"
+                                    <NumberField 
+                                      step="0.05"
                                       value={study.funcoes_adicionais[func].t_low}
-                                      onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], t_low: Number(e.target.value)}}})}
+                                      onChange={(val) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], t_low: val}}})}
                                       className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
                                     />
                                   </div>
                                   <div>
                                     <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">T. Sob (s)</label>
-                                    <input 
-                                      type="number" step="0.05"
+                                    <NumberField 
+                                      step="0.05"
                                       value={study.funcoes_adicionais[func].t_high}
-                                      onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], t_high: Number(e.target.value)}}})}
+                                      onChange={(val) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], t_high: val}}})}
                                       className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
                                     />
                                   </div>
@@ -2525,19 +2663,18 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                               <div className="grid grid-cols-2 gap-2">
                                 <div>
                                   <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Kw Reversa</label>
-                                  <input 
-                                    type="number"
+                                  <NumberField 
                                     value={study.funcoes_adicionais[func].p_rev}
-                                    onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], p_rev: Number(e.target.value)}}})}
+                                    onChange={(val) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], p_rev: val}}})}
                                     className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
                                   />
                                 </div>
                                 <div>
                                   <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Tempo (s)</label>
-                                  <input 
-                                    type="number" step="0.1"
+                                  <NumberField 
+                                    step="0.1"
                                     value={study.funcoes_adicionais[func].t_rev}
-                                    onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], t_rev: Number(e.target.value)}}})}
+                                    onChange={(val) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], t_rev: val}}})}
                                     className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
                                   />
                                 </div>
@@ -2546,28 +2683,26 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                               <div className="grid grid-cols-3 gap-1.5">
                                 <div>
                                   <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Pick (A)</label>
-                                  <input 
-                                    type="number"
+                                  <NumberField 
                                     value={study.funcoes_adicionais[func].pickup}
-                                    onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], pickup: Number(e.target.value)}}})}
+                                    onChange={(val) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], pickup: val}}})}
                                     className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
                                   />
                                 </div>
                                 <div>
                                   <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">TMS</label>
-                                  <input 
-                                    type="number" step="0.05"
+                                  <NumberField 
+                                    step="0.05"
                                     value={study.funcoes_adicionais[func].tms}
-                                    onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], tms: Number(e.target.value)}}})}
+                                    onChange={(val) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], tms: val}}})}
                                     className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
                                   />
                                 </div>
                                 <div>
                                   <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Ângulo</label>
-                                  <input 
-                                    type="number"
+                                  <NumberField 
                                     value={study.funcoes_adicionais[func].angulo}
-                                    onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], angulo: Number(e.target.value)}}})}
+                                    onChange={(val) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], angulo: val}}})}
                                     className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
                                   />
                                 </div>
@@ -2576,19 +2711,18 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                               <div className="grid grid-cols-2 gap-2">
                                 <div>
                                   <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Pick (%)</label>
-                                  <input 
-                                    type="number"
+                                  <NumberField 
                                     value={study.funcoes_adicionais[func].v_pick}
-                                    onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], v_pick: Number(e.target.value)}}})}
+                                    onChange={(val) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], v_pick: val}}})}
                                     className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
                                   />
                                 </div>
                                 <div>
                                   <label className="text-[7px] text-zinc-500 uppercase block mb-0.5">Tempo (s)</label>
-                                  <input 
-                                    type="number" step="0.1"
+                                  <NumberField 
+                                    step="0.1"
                                     value={study.funcoes_adicionais[func].t_pick}
-                                    onChange={(e) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], t_pick: Number(e.target.value)}}})}
+                                    onChange={(val) => setStudy({...study, funcoes_adicionais: {...study.funcoes_adicionais, [func]: {...study.funcoes_adicionais[func], t_pick: val}}})}
                                     className="w-full bg-zinc-950 border border-zinc-800 text-blue-400 p-1 text-[9px] rounded"
                                   />
                                 </div>
@@ -2647,19 +2781,17 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                           <div className="grid grid-cols-2 gap-2">
                             <div>
                                <label className="text-[8px] text-zinc-500 uppercase block mb-1">Corrente (A)</label>
-                               <input 
-                                 type="number"
+                               <NumberField 
                                  value={study.geracao_propria?.i_adj || 0}
-                                 onChange={(e) => setStudy({...study, geracao_propria: {...study.geracao_propria, i_adj: Number(e.target.value)}})}
+                                 onChange={(val) => setStudy({...study, geracao_propria: {...study.geracao_propria, i_adj: val}})}
                                  className="w-full bg-black border border-zinc-800 text-purple-400 p-1 text-[9px] rounded"
                                />
                             </div>
                             <div>
                                <label className="text-[8px] text-zinc-500 uppercase block mb-1">Tempo (s)</label>
-                               <input 
-                                 type="number"
+                               <NumberField 
                                  value={study.geracao_propria?.t_adj || 0}
-                                 onChange={(e) => setStudy({...study, geracao_propria: {...study.geracao_propria, t_adj: Number(e.target.value)}})}
+                                 onChange={(val) => setStudy({...study, geracao_propria: {...study.geracao_propria, t_adj: val}})}
                                  className="w-full bg-black border border-zinc-800 text-purple-400 p-1 text-[9px] rounded"
                                />
                             </div>
@@ -2695,19 +2827,17 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                           <div className="grid grid-cols-2 gap-2">
                             <div>
                                <label className="text-[8px] text-zinc-500 uppercase block mb-1">Limite Inf (A)</label>
-                               <input 
-                                 type="number"
+                               <NumberField 
                                  value={study.sincronismo?.i_low || 0}
-                                 onChange={(e) => setStudy({...study, sincronismo: {...study.sincronismo, i_low: Number(e.target.value)}})}
+                                 onChange={(val) => setStudy({...study, sincronismo: {...study.sincronismo, i_low: val}})}
                                  className="w-full bg-black border border-zinc-800 text-purple-400 p-1 text-[9px] rounded"
                                />
                             </div>
                             <div>
                                <label className="text-[8px] text-zinc-500 uppercase block mb-1">Limite Sup (A)</label>
-                               <input 
-                                 type="number"
+                               <NumberField 
                                  value={study.sincronismo?.i_high || 0}
-                                 onChange={(e) => setStudy({...study, sincronismo: {...study.sincronismo, i_high: Number(e.target.value)}})}
+                                 onChange={(val) => setStudy({...study, sincronismo: {...study.sincronismo, i_high: val}})}
                                  className="w-full bg-black border border-zinc-800 text-purple-400 p-1 text-[9px] rounded"
                                />
                             </div>
@@ -3024,14 +3154,13 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                         <div className="mt-1.5 pt-1.5 border-t border-zinc-800/60 flex items-center justify-between text-[8px]">
                           <span className="text-zinc-400">Ajuste Seletividade:</span>
                           <div className="flex items-center gap-1">
-                            <input 
-                              type="number"
+                            <NumberField 
                               min="50"
                               max="1000"
                               step="10"
-                              value={study.margem_seletividade_minima_ms || 200}
-                              onChange={(e) => {
-                                const val = Math.max(10, Number(e.target.value) || 200);
+                              value={study.margem_seletividade_minima_ms}
+                              fallbackValue={200}
+                              onChange={(val) => {
                                 setStudy(prev => ({ ...prev, margem_seletividade_minima_ms: val }));
                               }}
                               className="w-12 bg-zinc-900 border border-zinc-700 text-green-400 text-[10px] px-1 py-0.5 rounded text-right font-bold outline-none focus:border-green-500"
@@ -3073,13 +3202,11 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                           </button>
                         </div>
                         <div className="flex items-center gap-1">
-                          <input
-                            type="number"
+                          <NumberField
                             step="5"
                             min="0"
-                            value={study.rele_fase.i_inst || ""}
-                            onChange={(e) => {
-                              const val = Number(e.target.value);
+                            value={study.rele_fase.i_inst}
+                            onChange={(val) => {
                               setStudy(prev => ({
                                 ...prev,
                                 rele_fase: { ...prev.rele_fase, i_inst: val }
@@ -3560,13 +3687,13 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                       Ajuste de Seletividade (ms)
                     </label>
                     <div className="flex items-center gap-1.5">
-                      <input
-                        type="number"
+                      <NumberField
                         min="50"
                         max="1000"
                         step="10"
-                        value={cemigModalData.margemMinimaMs || 200}
-                        onChange={(e) => setCemigModalData(prev => ({ ...prev, margemMinimaMs: Number(e.target.value) || 200 }))}
+                        value={cemigModalData.margemMinimaMs}
+                        fallbackValue={200}
+                        onChange={(val) => setCemigModalData(prev => ({ ...prev, margemMinimaMs: val }))}
                         className="w-full bg-zinc-900 border border-green-500/50 text-green-400 p-2 text-xs rounded font-mono font-bold outline-none focus:border-green-400"
                         title="Margem de seletividade cronométrica requerida em ms (padrão ND 5.3: 200ms)"
                       />
@@ -3578,13 +3705,13 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                       Multiplicador Inrush Trafo
                     </label>
                     <div className="flex items-center gap-2">
-                      <input
-                        type="number"
+                      <NumberField
                         min="5"
                         max="14"
                         step="0.5"
                         value={cemigModalData.inrushMult}
-                        onChange={(e) => setCemigModalData(prev => ({ ...prev, inrushMult: Number(e.target.value) }))}
+                        fallbackValue={8}
+                        onChange={(val) => setCemigModalData(prev => ({ ...prev, inrushMult: val }))}
                         className="w-full bg-zinc-900 border border-zinc-700 text-green-400 p-2 text-xs rounded font-mono outline-none focus:border-green-500"
                       />
                       <span className="text-xs text-zinc-400 font-mono">x Inom</span>
@@ -3616,11 +3743,10 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono">
                       Pickup Fase (51) [A]
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       step="1"
                       value={cemigModalData.pickupFase}
-                      onChange={(e) => setCemigModalData(prev => ({ ...prev, pickupFase: Number(e.target.value) }))}
+                      onChange={(val) => setCemigModalData(prev => ({ ...prev, pickupFase: val }))}
                       className="w-full bg-zinc-900 border border-zinc-700 text-green-400 p-2 text-xs rounded font-mono outline-none focus:border-green-500"
                     />
                     <span className="text-[9px] text-zinc-500 font-mono block mt-0.5">
@@ -3632,13 +3758,13 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono">
                       Dial / TMS de Fase (51)
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       step="0.01"
                       min="0.02"
                       max="1.50"
                       value={cemigModalData.tmsFase}
-                      onChange={(e) => setCemigModalData(prev => ({ ...prev, tmsFase: Number(e.target.value) }))}
+                      fallbackValue={0.05}
+                      onChange={(val) => setCemigModalData(prev => ({ ...prev, tmsFase: val }))}
                       className="w-full bg-zinc-900 border border-zinc-700 text-green-400 p-2 text-xs rounded font-mono outline-none focus:border-green-500"
                     />
                     <span className="text-[9px] text-zinc-500 font-mono block mt-0.5">
@@ -3668,11 +3794,10 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono">
                       Instantâneo Fase (50) [A]
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       step="5"
                       value={cemigModalData.instFase}
-                      onChange={(e) => setCemigModalData(prev => ({ ...prev, instFase: Number(e.target.value) }))}
+                      onChange={(val) => setCemigModalData(prev => ({ ...prev, instFase: val }))}
                       className="w-full bg-zinc-900 border border-zinc-700 text-green-400 p-2 text-xs rounded font-mono outline-none focus:border-green-500"
                     />
                     <span className={`text-[9px] font-mono block mt-0.5 ${modalInstPhaseValidation?.isValid ? 'text-green-400' : 'text-amber-400'}`}>
@@ -3686,11 +3811,10 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono">
                       Tempo Definido (50D) [A]
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       step="5"
                       value={cemigModalData.defFase}
-                      onChange={(e) => setCemigModalData(prev => ({ ...prev, defFase: Number(e.target.value) }))}
+                      onChange={(val) => setCemigModalData(prev => ({ ...prev, defFase: val }))}
                       className="w-full bg-zinc-900 border border-zinc-700 text-green-400 p-2 text-xs rounded font-mono outline-none focus:border-green-500"
                     />
                   </div>
@@ -3699,13 +3823,13 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono">
                       Tempo de Atuação 50D [s]
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       step="0.05"
                       min="0.05"
                       max="2.00"
                       value={cemigModalData.tDefFase}
-                      onChange={(e) => setCemigModalData(prev => ({ ...prev, tDefFase: Number(e.target.value) }))}
+                      fallbackValue={0.3}
+                      onChange={(val) => setCemigModalData(prev => ({ ...prev, tDefFase: val }))}
                       className="w-full bg-zinc-900 border border-zinc-700 text-green-400 p-2 text-xs rounded font-mono outline-none focus:border-green-500"
                     />
                   </div>
@@ -3727,11 +3851,10 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono">
                       Pickup Neutro (51N) [A]
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       step="1"
                       value={cemigModalData.pickupNeutro}
-                      onChange={(e) => setCemigModalData(prev => ({ ...prev, pickupNeutro: Number(e.target.value) }))}
+                      onChange={(val) => setCemigModalData(prev => ({ ...prev, pickupNeutro: val }))}
                       className="w-full bg-zinc-900 border border-zinc-700 text-blue-400 p-2 text-xs rounded font-mono outline-none focus:border-green-500"
                     />
                     <span className="text-[9px] text-zinc-500 font-mono block mt-0.5">
@@ -3743,13 +3866,13 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono">
                       Dial / TMS de Neutro (51N)
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       step="0.01"
                       min="0.02"
                       max="1.50"
                       value={cemigModalData.tmsNeutro}
-                      onChange={(e) => setCemigModalData(prev => ({ ...prev, tmsNeutro: Number(e.target.value) }))}
+                      fallbackValue={0.05}
+                      onChange={(val) => setCemigModalData(prev => ({ ...prev, tmsNeutro: val }))}
                       className="w-full bg-zinc-900 border border-zinc-700 text-blue-400 p-2 text-xs rounded font-mono outline-none focus:border-green-500"
                     />
                   </div>
@@ -3776,11 +3899,10 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono">
                       Instantâneo Neutro (50N) [A]
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       step="5"
                       value={cemigModalData.instNeutro}
-                      onChange={(e) => setCemigModalData(prev => ({ ...prev, instNeutro: Number(e.target.value) }))}
+                      onChange={(val) => setCemigModalData(prev => ({ ...prev, instNeutro: val }))}
                       className="w-full bg-zinc-900 border border-zinc-700 text-blue-400 p-2 text-xs rounded font-mono outline-none focus:border-green-500"
                     />
                     <span className="text-[9px] text-zinc-500 font-mono block mt-0.5">
@@ -3792,11 +3914,10 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono">
                       Tempo Definido (50DN) [A]
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       step="5"
                       value={cemigModalData.defNeutro}
-                      onChange={(e) => setCemigModalData(prev => ({ ...prev, defNeutro: Number(e.target.value) }))}
+                      onChange={(val) => setCemigModalData(prev => ({ ...prev, defNeutro: val }))}
                       className="w-full bg-zinc-900 border border-zinc-700 text-blue-400 p-2 text-xs rounded font-mono outline-none focus:border-green-500"
                     />
                   </div>
@@ -3805,13 +3926,13 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                     <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono">
                       Tempo de Atuação 50DN [s]
                     </label>
-                    <input
-                      type="number"
+                    <NumberField
                       step="0.05"
                       min="0.05"
                       max="2.00"
                       value={cemigModalData.tDefNeutro}
-                      onChange={(e) => setCemigModalData(prev => ({ ...prev, tDefNeutro: Number(e.target.value) }))}
+                      fallbackValue={0.3}
+                      onChange={(val) => setCemigModalData(prev => ({ ...prev, tDefNeutro: val }))}
                       className="w-full bg-zinc-900 border border-zinc-700 text-blue-400 p-2 text-xs rounded font-mono outline-none focus:border-green-500"
                     />
                   </div>
@@ -3939,12 +4060,12 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                   </label>
                   {fuseModalData.isCustom && (
                     <div className="flex items-center gap-1">
-                      <input
-                        type="number"
+                      <NumberField
                         min="1"
                         max="300"
                         value={fuseModalData.customRating}
-                        onChange={(e) => setFuseModalData(prev => ({ ...prev, customRating: parseFloat(e.target.value) || 40 }))}
+                        fallbackValue={40}
+                        onChange={(val) => setFuseModalData(prev => ({ ...prev, customRating: val }))}
                         className="w-20 bg-zinc-900 border border-yellow-500/50 text-yellow-400 px-2 py-1 text-xs rounded font-mono font-bold outline-none"
                       />
                       <span className="text-xs text-zinc-400 font-mono font-bold">K</span>
@@ -3987,13 +4108,13 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
                   <label className="text-[10px] text-zinc-400 uppercase block mb-1 font-mono font-bold">
                     Fator de Tolerância
                   </label>
-                  <input
-                    type="number"
+                  <NumberField
                     step="0.05"
                     min="0.5"
                     max="1.5"
                     value={fuseModalData.fatorTolerancia}
-                    onChange={(e) => setFuseModalData(prev => ({ ...prev, fatorTolerancia: parseFloat(e.target.value) || 1.0 }))}
+                    fallbackValue={1.0}
+                    onChange={(val) => setFuseModalData(prev => ({ ...prev, fatorTolerancia: val }))}
                     className="w-full bg-zinc-900 border border-zinc-700 text-yellow-400 px-3 py-1.5 text-xs rounded font-mono outline-none focus:border-yellow-500"
                   />
                   <span className="text-[9px] text-zinc-500 font-mono mt-0.5 block">1.0 = Nominal CEMIG</span>
@@ -4040,6 +4161,15 @@ export const CoordSystem: React.FC<{ user: any }> = ({ user }) => {
       {showHelp && (
           <HelpMenu onClose={() => setShowHelp(false)} />
         )}
+
+      {showRelayDiagramModal && (
+        <RelayDiagramModal
+          isOpen={showRelayDiagramModal}
+          onClose={() => setShowRelayDiagramModal(false)}
+          manufacturer={study.rele_marca}
+          model={study.rele_modelo}
+        />
+      )}
       </AnimatePresence>
 
       <AnimatePresence>

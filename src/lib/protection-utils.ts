@@ -26,6 +26,7 @@ export const CURVE_CONSTANTS: Record<Exclude<CurveType, 'CUSTOM'>, CurveParams> 
  * IEEE: t = TD * ( (A / ( (I/Ipickup)^P - 1 )) + B )
  */
 export function calculateTime(I: number, Ipickup: number, TMS: number, type: CurveType, customParams?: CurveParams): number {
+  if (!Ipickup || Ipickup <= 0) return 1000;
   const constants = type === 'CUSTOM' ? (customParams || { A: 0.14, B: 0, P: 0.02 }) : CURVE_CONSTANTS[type as keyof typeof CURVE_CONSTANTS];
   const ratio = I / Ipickup;
   
@@ -124,14 +125,17 @@ export function generateFullRelayCurve(
  * Calcula Corrente Nominal do Trafo (In)
  */
 export function calculateInominal(kva: number, v_prim: number): number {
-  return (kva) / (v_prim * Math.sqrt(3) / 1000);
+  const v = v_prim > 0 ? v_prim : 13800;
+  return (kva || 0) / (v * Math.sqrt(3) / 1000);
 }
 
 /**
  * Calcula Corrente Nominal da Planta baseado na Demanda (In)
  */
 export function calculateInPlant(demanda_kw: number, v_prim: number, fp: number): number {
-  return (demanda_kw) / (v_prim * Math.sqrt(3) * fp / 1000);
+  const v = v_prim > 0 ? v_prim : 13800;
+  const f = fp > 0 ? fp : 0.92;
+  return (demanda_kw || 0) / (v * Math.sqrt(3) * f / 1000);
 }
 
 import { checkFuseSelectivity } from './fuse-curves';
@@ -142,8 +146,11 @@ import { checkFuseSelectivity } from './fuse-curves';
  * Categoria II: 501 a 1667 kVA (Mono) ou até 5000 kVA (Tri)
  */
 export function calculateANSIPoints(kva: number, v_prim: number, z_pct: number) {
-  const In = calculateInominal(kva, v_prim);
-  const I_sc = (100 / z_pct) * In;
+  const k = kva > 0 ? kva : 500;
+  const v = v_prim > 0 ? v_prim : 13800;
+  const z = z_pct > 0 ? z_pct : 5;
+  const In = calculateInominal(k, v);
+  const I_sc = (100 / z) * In;
   // Conforme CEMIG ND 5.3 Anexo A: Ponto ANSI de Neutro é 0.58 x ANSI de Fase com tempo de 3.0s
   const I_sc_neutro = I_sc * 0.58;
   
