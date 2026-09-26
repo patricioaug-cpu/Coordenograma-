@@ -12,7 +12,7 @@ import {
 } from 'firebase/auth';
 import { doc, getDoc, setDoc, updateDoc, serverTimestamp } from 'firebase/firestore';
 import { auth, db } from '../lib/firebase';
-import { LogIn, UserPlus, LogOut, ShieldAlert, Cpu, CheckCircle2, KeyRound } from 'lucide-react';
+import { LogIn, UserPlus, LogOut, ShieldAlert, Cpu, CheckCircle2, KeyRound, Mail, ArrowLeft, Send } from 'lucide-react';
 
 function translateAuthError(err: any): string {
   const code = err?.code || '';
@@ -165,7 +165,11 @@ export const LoginView = () => {
   const [resetSent, setResetSent] = useState(false);
   const [isSendingReset, setIsSendingReset] = useState(false);
 
-  // Estados para redefinição de senha
+  // Estados para a tela dedicada de "Esqueceu a Senha"
+  const [isForgotPasswordView, setIsForgotPasswordView] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+
+  // Estados para redefinição de senha (digitar nova senha)
   const [isResetMode, setIsResetMode] = useState(false);
   const [resetCodeInput, setResetCodeInput] = useState('');
   const [resetEmail, setResetEmail] = useState('');
@@ -184,6 +188,7 @@ export const LoginView = () => {
 
       if (code && (mode === 'resetPassword' || !mode)) {
         setIsResetMode(true);
+        setIsForgotPasswordView(false);
         setResetCodeInput(code);
         verifyPasswordResetCode(auth, code)
           .then((verifiedEmail) => {
@@ -200,9 +205,11 @@ export const LoginView = () => {
     }
   }, []);
 
-  const handleForgotPassword = async () => {
-    if (!email) {
-      setError('Por favor, informe seu e-mail para recuperar a senha.');
+  const handleForgotPassword = async (e?: React.FormEvent) => {
+    if (e) e.preventDefault();
+    const targetEmail = (forgotEmail || email).trim();
+    if (!targetEmail) {
+      setError('Por favor, informe seu e-mail para receber o link de troca de senha.');
       return;
     }
     setError('');
@@ -217,10 +224,10 @@ export const LoginView = () => {
       };
 
       try {
-        await sendPasswordResetEmail(auth, email.trim(), actionCodeSettings);
+        await sendPasswordResetEmail(auth, targetEmail, actionCodeSettings);
       } catch (innerErr) {
         // Fallback para envio padrão caso o domínio de redirecionamento encontre restrição
-        await sendPasswordResetEmail(auth, email.trim());
+        await sendPasswordResetEmail(auth, targetEmail);
       }
 
       setResetSent(true);
@@ -409,6 +416,136 @@ export const LoginView = () => {
     );
   }
 
+  // TELA DEDICADA DE ESQUECEU A SENHA (SOLICITAÇÃO DO E-MAIL)
+  if (isForgotPasswordView) {
+    return (
+      <div className="min-h-screen bg-black flex items-center justify-center p-4">
+        <div className="max-w-md w-full bg-zinc-900 border border-green-500/30 p-8 rounded-lg shadow-2xl shadow-green-500/10">
+          <div className="flex flex-col items-center mb-8">
+            <Cpu className="w-16 h-16 text-green-500 mb-4 animate-pulse" />
+            <h1 className="text-3xl font-mono text-green-500 tracking-tighter uppercase">Sistema Coordenograma</h1>
+            <p className="text-green-800 font-mono text-xs mt-2 uppercase tracking-widest">Recuperação de Senha</p>
+          </div>
+
+          <p className="text-xs text-green-400/90 font-mono mb-6 text-center leading-relaxed">
+            Informe o e-mail cadastrado na sua conta para o qual será enviado o link de troca de senha.
+          </p>
+
+          {resetSent ? (
+            <div className="space-y-4 font-mono text-xs">
+              <div className="bg-green-950/30 border border-green-700/60 p-4 rounded text-green-300 space-y-2">
+                <div className="flex items-start gap-2">
+                  <CheckCircle2 className="w-5 h-5 text-green-400 shrink-0 mt-0.5" />
+                  <div>
+                    <strong className="block text-sm text-green-400 font-bold">Link enviado com sucesso!</strong>
+                    <span className="text-xs text-green-200">
+                      Enviamos as instruções de recuperação para:
+                    </span>
+                    <p className="text-white font-bold mt-1 text-sm bg-black/60 p-2 rounded border border-green-900">
+                      {forgotEmail || email}
+                    </p>
+                  </div>
+                </div>
+
+                <p className="text-[11px] text-green-400/90 border-t border-green-900/60 pt-2 leading-relaxed">
+                  Verifique a sua caixa de entrada e a pasta de <strong>Spam / Lixo Eletrônico</strong>. Se o link recebido no e-mail estiver desabilitado (segurança do Gmail), você pode copiar o link ou o código e utilizar a opção abaixo:
+                </p>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsForgotPasswordView(false);
+                    setIsResetMode(true);
+                    setError('');
+                  }}
+                  className="w-full mt-2 bg-green-950 hover:bg-green-900 text-green-300 border border-green-700 hover:border-green-500 py-2 px-3 rounded text-xs font-mono font-bold uppercase transition-all flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <KeyRound className="w-4 h-4" />
+                  Inserir Link/Código e Trocar Senha
+                </button>
+              </div>
+
+              <div className="pt-2 text-center">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsForgotPasswordView(false);
+                    setResetSent(false);
+                    setError('');
+                  }}
+                  className="text-green-700 hover:text-green-500 text-xs font-mono underline transition-all uppercase tracking-tighter flex items-center justify-center gap-1 mx-auto cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" /> Voltar ao Login
+                </button>
+              </div>
+            </div>
+          ) : (
+            <form onSubmit={handleForgotPassword} className="space-y-4">
+              <div>
+                <label className="block text-green-500 text-xs font-mono mb-1 uppercase">
+                  E-mail para envio do link
+                </label>
+                <div className="relative">
+                  <input
+                    type="email"
+                    value={forgotEmail}
+                    onChange={(e) => setForgotEmail(e.target.value)}
+                    className="w-full bg-black border border-green-900 text-green-400 p-3 pr-10 rounded focus:outline-none focus:border-green-500 font-mono text-xs transition-all"
+                    placeholder="seu@email.com"
+                    required
+                    autoFocus
+                  />
+                  <Mail className="w-4 h-4 text-green-800 absolute right-3 top-3.5 pointer-events-none" />
+                </div>
+              </div>
+
+              {error && (
+                <div className="flex items-center gap-2 text-red-500 text-xs font-mono bg-red-950/20 p-2.5 border border-red-900/50 rounded">
+                  <ShieldAlert className="w-4 h-4 shrink-0" />
+                  <span>{error}</span>
+                </div>
+              )}
+
+              <button
+                type="submit"
+                disabled={isSendingReset}
+                className="w-full bg-green-600 hover:bg-green-500 text-black font-bold py-3 rounded transition-colors flex items-center justify-center gap-2 font-mono uppercase cursor-pointer disabled:opacity-50"
+              >
+                <Send className="w-4 h-4" />
+                {isSendingReset ? 'Enviando Link...' : 'Enviar Link de Troca de Senha'}
+              </button>
+
+              <div className="mt-4 flex flex-col gap-2 text-center pt-2">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsForgotPasswordView(false);
+                    setError('');
+                  }}
+                  className="text-green-700 hover:text-green-500 text-xs font-mono underline transition-all uppercase tracking-tighter flex items-center justify-center gap-1 mx-auto cursor-pointer"
+                >
+                  <ArrowLeft className="w-3.5 h-3.5" /> Voltar ao Login
+                </button>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    setIsForgotPasswordView(false);
+                    setIsResetMode(true);
+                    setError('');
+                  }}
+                  className="text-green-900 hover:text-green-600 text-[10px] font-mono underline transition-all uppercase tracking-tighter cursor-pointer"
+                >
+                  Já possui o link ou código? Alterar Senha
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      </div>
+    );
+  }
+
   return (
     <div className="min-h-screen bg-black flex items-center justify-center p-4">
       <div className="max-w-md w-full bg-zinc-900 border border-green-500/30 p-8 rounded-lg shadow-2xl shadow-green-500/10">
@@ -461,32 +598,6 @@ export const LoginView = () => {
             </div>
           )}
 
-          {resetSent && (
-            <div className="text-green-500 text-xs font-mono bg-green-950/20 p-3 border border-green-900/50 rounded space-y-2">
-              <div className="flex items-start gap-2">
-                <CheckCircle2 className="w-4 h-4 text-green-400 shrink-0 mt-0.5" />
-                <div>
-                  <p className="font-bold">E-mail de recuperação enviado para:</p>
-                  <p className="text-green-300 font-semibold">{email}</p>
-                </div>
-              </div>
-              <p className="text-[10px] text-green-400/80 leading-relaxed border-t border-green-900/40 pt-1.5">
-                Verifique a caixa de entrada e a pasta de <strong>Spam</strong>. Se o link recebido estiver desabilitado no seu cliente de e-mail (comum no Gmail por segurança), copie o link ou código do e-mail e clique no botão abaixo para alterar sua senha:
-              </p>
-              <button
-                type="button"
-                onClick={() => {
-                  setIsResetMode(true);
-                  setError('');
-                }}
-                className="w-full mt-1 bg-green-950/60 hover:bg-green-900/60 text-green-300 border border-green-700/60 hover:border-green-500 py-1.5 px-3 rounded text-[11px] font-mono font-bold uppercase transition-all flex items-center justify-center gap-1.5 cursor-pointer"
-              >
-                <KeyRound className="w-3.5 h-3.5" />
-                Inserir Link/Código e Alterar Senha
-              </button>
-            </div>
-          )}
-
           <button 
             type="submit"
             className="w-full bg-green-600 hover:bg-green-500 text-black font-bold py-3 rounded transition-colors flex items-center justify-center gap-2 font-mono uppercase cursor-pointer"
@@ -501,11 +612,15 @@ export const LoginView = () => {
             <div className="flex flex-col gap-2">
               <button 
                 type="button"
-                onClick={handleForgotPassword}
-                disabled={isSendingReset}
-                className="text-green-800 hover:text-green-500 text-[10px] font-mono underline transition-all uppercase tracking-tighter disabled:opacity-50 cursor-pointer"
+                onClick={() => {
+                  setForgotEmail(email);
+                  setIsForgotPasswordView(true);
+                  setError('');
+                  setResetSent(false);
+                }}
+                className="text-green-800 hover:text-green-500 text-[10px] font-mono underline transition-all uppercase tracking-tighter cursor-pointer"
               >
-                {isSendingReset ? 'ENVIANDO E-MAIL...' : 'ESQUECEU A SENHA?'}
+                ESQUECEU A SENHA?
               </button>
               <button
                 type="button"
